@@ -1,0 +1,57 @@
+/* Estilos para nuxt-charts - Colores índigo y verde */
+:root {
+  /* Colores principales - Índigo y Verde */
+  --vis-color0: #6366f1 !important; /* Indigo-500 */
+  --vis-color1: #10b981 !important; /* Emerald-500 */
+  --vis-color2: #4f46e5 !important; /* Indigo-600 */
+  --vis-color3: #059669 !important; /* Emerald-600 */
+  --vis-color4: #818cf8 !important; /* Indigo-400 */
+  --vis-color5: #34d399 !important; /* Emerald-400 */
+  
+  /* Tooltip */
+  --vis-tooltip-background-color: #1e1b4b !important; /* Indigo-950 */
+  --vis-tooltip-border-color: #6366f1 !important;
+  --vis-tooltip-text-color: #ffffff !important;
+  --tooltip-label-color: rgba(255, 255, 255, 0.7) !important;
+  --tooltip-value-color: #ffffff !important;
+  
+  /* Ejes y grid */
+  --vis-axis-grid-color: rgba(99, 102, 241, 0.15) !important;
+  --vis-axis-tick-label-color: rgba(0, 0, 0, 0.6) !important;
+  --vis-axis-label-color: rgba(0, 0, 0, 0.7) !important;
+  
+  /* Leyenda */
+  --vis-legend-label-color: rgba(0, 0, 0, 0.8) !important;
+}
+
+/* Modo oscuro */
+.dark {
+  --vis-color0: #818cf8 !important; /* Indigo-400 */
+  --vis-color1: #34d399 !important; /* Emerald-400 */
+  --vis-color2: #6366f1 !important; /* Indigo-500 */
+  --vis-color3: #10b981 !important; /* Emerald-500 */
+  --vis-color4: #a5b4fc !important; /* Indigo-300 */
+  --vis-color5: #6ee7b7 !important; /* Emerald-300 */
+  
+  --vis-tooltip-background-color: #0f172a !important;
+  --vis-tooltip-border-color: #6366f1 !important;
+  --vis-tooltip-text-color: #ffffff !important;
+  
+  --vis-axis-grid-color: rgba(99, 102, 241, 0.2) !important;
+  --vis-axis-tick-label-color: rgba(255, 255, 255, 0.6) !important;
+  --vis-axis-label-color: rgba(255, 255, 255, 0.7) !important;
+  --vis-legend-label-color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* Ajustes para las gráficas donut */
+.vis-donut {
+  filter: drop-shadow(0 4px 6px rgba(99, 102, 241, 0.1));
+}
+
+/* Ajustes para tooltips */
+.vis-tooltip {
+  border-radius: 8px !important;
+  padding: 12px 16px !important;
+  font-size: 13px !important;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}

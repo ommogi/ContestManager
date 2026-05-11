@@ -1,15 +1,23 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+
+const sentryModule = process.env.SENTRY_DSN ? '@sentry/nuxt/module' : null
+
+const modules = [
+  '@pinia/nuxt',
+  '@nuxtjs/tailwindcss',
+  'shadcn-nuxt',
+  '@nuxtjs/color-mode',
+  'nuxt-charts',
+  ...(sentryModule ? [sentryModule] : []),
+] as any[]
+
+
+
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   ssr: false,
   devtools: { enabled: true },
-  modules: [
-    '@pinia/nuxt',
-    '@nuxtjs/tailwindcss',
-    'shadcn-nuxt',
-    '@nuxtjs/color-mode',
-    ...(process.env.SENTRY_DSN ? ['@sentry/nuxt/module'] : []) as any,
-  ],
+  modules,
   sentry: {
     sourceMapsUploadOptions: {
       org: process.env.SENTRY_ORG || '',
@@ -17,7 +25,7 @@ export default defineNuxtConfig({
       authToken: process.env.SENTRY_AUTH_TOKEN || '',
     },
   },
-  css: ['vue-sonner/style.css'],
+  css: ['vue-sonner/style.css', '~/assets/css/charts.css', '~/assets/css/editor.css'],
   colorMode: {
     classSuffix: ''
   },

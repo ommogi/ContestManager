@@ -15,6 +15,12 @@ export type Profile = {
   full_name: string | null
   avatar_url: string | null
   account_type: AccountType
+  first_name: string | null
+  last_name: string | null
+  dni: string | null
+  country: string | null
+  phone: string | null
+  birthdate: string | null
   created_at: string
   updated_at: string
 }
@@ -29,6 +35,8 @@ export interface Database {
           name: string
           slug: string
           logo_url: string | null
+          contact_phone: string | null
+          contact_country: string | null
           settings: Json | null
           created_at: string
           updated_at: string
