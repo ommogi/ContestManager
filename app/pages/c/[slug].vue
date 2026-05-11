@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { Loader2, Calendar, Users, Trophy, ArrowRight, Lock, MapPin } from 'lucide-vue-next'
+import { Loader2, Calendar, Users, Trophy, ArrowRight, Lock, FileText } from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { marked } from 'marked'
 
 definePageMeta({
   layout: 'auth',
@@ -18,7 +20,7 @@ const { data, pending, error } = await useFetch<{
     starts_at: string | null; ends_at: string | null
     registration_open: boolean; registration_token: string
     entry_fee_cents: number; org_name: string; org_slug: string
-    org_charges_enabled: boolean
+    org_charges_enabled: boolean; settings: Record<string, unknown> | null
   }
   categories: Array<{
     id: string; name: string; description: string | null; status: string
@@ -29,6 +31,10 @@ const { data, pending, error } = await useFetch<{
 
 const contest = computed(() => data.value?.contest)
 const categories = computed(() => data.value?.categories ?? [])
+const hasRules = computed(() => !!(contest.value?.settings as any)?.rules)
+
+const parsedDescription = computed(() => marked.parse(contest.value?.description || '') as string)
+const parsedRules = computed(() => marked.parse((contest.value?.settings as any)?.rules || '') as string)
 
 const joinHref = computed(() =>
   contest.value ? `/join/${contest.value.registration_token}` : '#'
@@ -76,9 +82,6 @@ function fmtDate(iso: string | null) {
                 {{ contest.org_name }}
               </p>
               <CardTitle class="text-2xl">{{ contest.name }}</CardTitle>
-              <CardDescription v-if="contest.description" class="mt-2">
-                {{ contest.description }}
-              </CardDescription>
             </div>
             <Badge v-if="contest.status === 'finished'" variant="secondary" class="shrink-0">
               Finalizado
@@ -105,6 +108,46 @@ function fmtDate(iso: string | null) {
             </div>
           </div>
         </CardHeader>
+      </Card>
+
+      <!-- Description + Rules tabs -->
+      <Card class="shadow-lg">
+        <CardHeader>
+          <CardTitle class="text-base">Detalles</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Tabs default-value="description">
+            <TabsList class="w-full">
+              <TabsTrigger value="description" class="flex-1">Descripción</TabsTrigger>
+              <TabsTrigger value="reglamento" class="flex-1">Reglamento</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="description" class="mt-4">
+              <div
+                v-if="contest.description"
+                class="rich-content text-sm prose prose-sm max-w-none"
+                v-html="parsedDescription"
+              />
+              <p v-else class="text-sm text-muted-foreground py-4 text-center">
+                El organizador no ha añadido una descripción.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="reglamento" class="mt-4">
+              <div
+                v-if="(contest.settings as any)?.rules"
+                class="rich-content text-sm prose prose-sm max-w-none"
+                v-html="parsedRules"
+              />
+              <div v-else class="flex flex-col items-center gap-2 py-6 text-center">
+                <FileText class="w-8 h-8 text-muted-foreground/40" />
+                <p class="text-sm text-muted-foreground">
+                  El organizador no ha publicado el reglamento.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
       </Card>
 
       <!-- CTA -->
