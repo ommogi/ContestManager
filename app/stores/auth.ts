@@ -85,6 +85,8 @@ export const useAuthStore = defineStore('auth', () => {
     } else {
       session.value = currentSession
       user.value = currentSession.user ?? null
+      // Set Realtime JWT before any composable subscribes to channels
+      try { supabase.realtime.setAuth(currentSession.access_token) } catch {}
     }
 
     if (user.value) {
@@ -103,6 +105,12 @@ export const useAuthStore = defineStore('auth', () => {
       session.value = newSession
       user.value = newSession?.user ?? null
 
+      // Keep Realtime socket JWT in sync — required so RLS-filtered channels
+      // (postgres_changes) deliver rows after sign-in / token refresh.
+      try {
+        if (newSession?.access_token) supabase.realtime.setAuth(newSession.access_token)
+      } catch (e) { /* ignore */ }
+
       if (user.value && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
         await Promise.all([fetchProfile(), fetchOrganization()])
       }
@@ -115,11 +123,45 @@ export const useAuthStore = defineStore('auth', () => {
     return getSupabase().auth.signInWithPassword({ email, password })
   }
 
-  const signUp = async (email: string, password: string) => {
-    return getSupabase().auth.signUp({ email, password })
+  const signUp = async (email: string, password: string, marketingConsent?: boolean) => {
+    console.log('[auth] signUp called with:', email)
+    const result = await getSupabase().auth.signUp({ 
+      email, 
+      password,
+      options: {
+        data: {
+          marketing_consent: marketingConsent || false,
+        },
+      },
+    })
+    
+    console.log('[auth] signUp result:', { 
+      hasUser: !!result.data?.user, 
+      hasError: !!result.error,
+      userId: result.data?.user?.id 
+    })
+    
+    if (result.data?.user && !result.error) {
+      console.log('[auth] Calling welcome email endpoint...')
+      try {
+        const welcomeResult = await $fetch('/api/auth/welcome', {
+          method: 'POST',
+          body: {
+            email,
+            first_name: null,
+            marketing_consent: marketingConsent || false,
+          },
+        })
+        console.log('[auth] Welcome email endpoint response:', welcomeResult)
+      } catch (err) {
+        console.error('[auth] Welcome email failed:', err)
+      }
+    }
+    
+    return result
   }
 
-  const signInWithOAuth = async (provider: 'google' | 'github', returnTo = '') => {
+  const signInWithOAuth = async (provider: 'google' | 'github' | 'apple' | 'facebook', returnTo = '') => {
     const redirectTo = (() => {
       if (typeof window === 'undefined') return undefined
       const base = `${window.location.origin}/auth/callback`
@@ -128,12 +170,23 @@ export const useAuthStore = defineStore('auth', () => {
     return getSupabase().auth.signInWithOAuth({ provider, options: { redirectTo } })
   }
 
-  const signOut = async () => {
-    await getSupabase().auth.signOut()
-    user.value = null
-    session.value = null
-    profile.value = null
-    organization.value = null
+  const signOut = async (opts: { scope?: 'global' | 'local' | 'others' } = {}) => {
+    loading.value = true
+    try {
+      if (authListener) {
+        authListener.subscription.unsubscribe()
+        authListener = null
+      }
+      // scope='local' skips POST /auth/v1/logout → safe when token already invalid
+      // (e.g. after user deletion). Default scope='global' preserves prior behavior.
+      try { await getSupabase().auth.signOut(opts.scope ? { scope: opts.scope } : undefined) } catch {}
+      session.value = null
+      user.value = null
+      profile.value = null
+      organization.value = null
+    } finally {
+      loading.value = false
+    }
   }
 
   // ─── Profile / Org mutations ──────────────────────────────────────────────
@@ -150,11 +203,24 @@ export const useAuthStore = defineStore('auth', () => {
     return { data: updated, error }
   }
 
-  const createOrganization = async (name: string, slug: string) => {
+  const createOrganization = async (
+    name: string,
+    slug: string,
+    contact_phone?: string,
+    contact_country?: string,
+    logo_url?: string
+  ) => {
     if (!user.value) return { data: null, error: new Error('No user') }
     const { data, error } = await getSupabase()
       .from('organizations')
-      .insert({ owner_id: user.value.id, name, slug })
+      .insert({
+        owner_id: user.value.id,
+        name,
+        slug,
+        contact_phone,
+        contact_country,
+        logo_url
+      })
       .select()
       .single()
     if (!error && data) organization.value = data as Organization
