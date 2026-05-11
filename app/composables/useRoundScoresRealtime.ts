@@ -17,8 +17,15 @@ export function useRoundScoresRealtime(
 
   let channel: RealtimeChannel | null = null
 
-  function subscribe(id: string) {
+  async function subscribe(id: string) {
     if (!id) return
+    // Ensure socket has user JWT before subscribing — otherwise RLS rejects
+    // events even though SUBSCRIBED returns OK.
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (token) (supabase as any).realtime.setAuth(token)
+    } catch { /* ignore */ }
 
     channel = supabase
       .channel(`scores:round:${id}`)
@@ -30,11 +37,13 @@ export function useRoundScoresRealtime(
           table: 'scores',
           filter: `round_id=eq.${id}`,
         },
-        () => {
-          onScoreChange(id)
-        }
+        () => onScoreChange(id),
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('[realtime/scores] subscribe failed:', status, err)
+        }
+      })
   }
 
   function unsubscribe() {
