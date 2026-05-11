@@ -4,7 +4,6 @@ import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -14,6 +13,8 @@ import {
   Plus, Trash2, Users, Check, Search, CheckCircle2, ChevronRight, ChevronLeft,
 } from 'lucide-vue-next'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
+import RichEditor from '@/components/ui/rich-editor/RichEditor.vue'
+import { apiClient } from '@/api/apiClient'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RangeCalendar } from '@/components/ui/range-calendar'
@@ -30,9 +31,10 @@ const router = useRouter()
 const df = new DateFormatter('es-ES', { dateStyle: 'medium' })
 
 // ── Step tracking ────────────────────────────────────────────────────────────
-const step = ref(1) // 1 = info, 2 = categories
+// 1 = info, 2 = description, 3 = reglamento, 4 = categories
+const step = ref(1)
 
-// ── Step 1 ───────────────────────────────────────────────────────────────────
+// ── Form data ────────────────────────────────────────────────────────────────
 const isCreating = ref(false)
 const formData = ref({ name: '', short_description: '', rules: '' })
 const dateRange = ref({ start: undefined, end: undefined }) as Ref<DateRange>
@@ -45,7 +47,14 @@ const isStep1Valid = computed(() =>
 
 const createdContest = ref<{ id: string; slug: string } | null>(null)
 
-async function createContest() {
+// Move from step 1 → 2 (no API call yet)
+function nextFromInfo() {
+  if (!isStep1Valid.value) return
+  step.value = 2
+}
+
+// Move from step 3 → 4: create contest with all collected data
+async function finishContentAndCreate() {
   if (!isStep1Valid.value || isCreating.value) return
   isCreating.value = true
   try {
@@ -61,7 +70,7 @@ async function createContest() {
     })
     createdContest.value = { id: data.id, slug: data.slug }
     toast.success('¡Concurso creado!')
-    step.value = 2
+    step.value = 4
     loadJudgePool()
   } catch (e: any) {
     toast.error(e?.data?.statusMessage || 'Error al crear el concurso')
@@ -70,7 +79,7 @@ async function createContest() {
   }
 }
 
-// ── Step 2 – Categories ──────────────────────────────────────────────────────
+// ── Step 4 – Categories ──────────────────────────────────────────────────────
 interface CategoryEntry { id: string; name: string; judges: JudgeEntry[] }
 interface JudgeEntry { memberId: string; poolId: string; name: string; email: string }
 
@@ -89,7 +98,6 @@ async function addCategory() {
     const cat: CategoryEntry = { id: data.id, name: data.name, judges: [] }
     categories.value.push(cat)
     categoryInput.value = ''
-    // Ask about judges
     pendingCategoryId.value = cat.id
     judgePickerOpen.value = true
   } catch (e: any) {
@@ -100,7 +108,13 @@ async function addCategory() {
 }
 
 async function removeCategory(catId: string) {
-  categories.value = categories.value.filter(c => c.id !== catId)
+  try {
+    await apiClient(`/api/categories/${catId}`, { method: 'DELETE' })
+    categories.value = categories.value.filter(c => c.id !== catId)
+    toast.success('Categoría eliminada')
+  } catch (e: any) {
+    toast.error(e?.data?.statusMessage || 'Error al eliminar la categoría')
+  }
 }
 
 // ── Judge Pool ───────────────────────────────────────────────────────────────
@@ -119,7 +133,6 @@ const isSavingJudges = ref(false)
 const judgePickerPage = ref(1)
 const JUDGE_PAGE_SIZE = 6
 
-// Initial selection snapshot when modal opens — used to diff on confirm
 const initialJudgePoolIds = ref<Set<string>>(new Set())
 
 watch(judgePickerOpen, (open) => {
@@ -158,7 +171,6 @@ const paginatedPool = computed(() => {
   return filteredPool.value.slice(start, start + JUDGE_PAGE_SIZE)
 })
 
-// Diff vs. initial selection — drives the confirm button
 const judgesToAddCount = computed(() => {
   let n = 0
   for (const id of selectedJudgePoolIds.value) {
@@ -186,7 +198,6 @@ function toggleJudge(judge: PoolJudge) {
   selectedJudgePoolIds.value = s
 }
 
-// Already-added judge pool ids for this contest (avoid duplicates)
 const addedPoolIds = computed(() => {
   const ids = new Set<string>()
   for (const cat of categories.value) {
@@ -205,7 +216,6 @@ async function confirmJudges() {
   const toAdd = judgePool.value.filter(j =>
     selectedJudgePoolIds.value.has(j.id) && !initialJudgePoolIds.value.has(j.id)
   )
-  // Judges removed — map poolId → existing memberId from cat.judges
   const toRemove = cat.judges.filter(j =>
     initialJudgePoolIds.value.has(j.poolId) && !selectedJudgePoolIds.value.has(j.poolId)
   )
@@ -232,7 +242,6 @@ async function confirmJudges() {
         : Promise.resolve([]),
     ])
 
-    // Update local cat.judges
     if (toRemove.length) {
       const removedPoolIds = new Set(toRemove.map(j => j.poolId))
       cat.judges = cat.judges.filter(j => !removedPoolIds.has(j.poolId))
@@ -266,6 +275,16 @@ function finish() {
   if (createdContest.value?.slug) navigateTo(`/contests/${createdContest.value.slug}`)
   else navigateTo('/contests')
 }
+
+// ── Stepper config ────────────────────────────────────────────────────────────
+const steps = [
+  { label: 'Información', sub: 'Nombre y fechas' },
+  { label: 'Descripción', sub: 'Texto de presentación' },
+  { label: 'Reglamento', sub: 'Normas del concurso' },
+  { label: 'Categorías', sub: 'Disciplinas y jurados' },
+]
+// progress width as % of container (track: left-[12.5%] → right-[12.5%] = 75% wide)
+const progressWidth = computed(() => `${(step.value - 1) * 25}%`)
 </script>
 
 <template>
@@ -287,21 +306,18 @@ function finish() {
       </button>
     </div>
 
-    <!-- New Stepper: connected pills with progress fill -->
+    <!-- 4-step progress stepper -->
     <div class="relative">
-      <!-- Track (between circle centers) -->
-      <div class="absolute top-5 left-1/4 right-1/4 h-px bg-zinc-200 dark:bg-zinc-800" />
+      <!-- Track -->
+      <div class="absolute top-5 left-[12.5%] right-[12.5%] h-px bg-zinc-200 dark:bg-zinc-800" />
       <!-- Progress fill -->
       <div
-        class="absolute top-5 left-1/4 h-px bg-zinc-900 dark:bg-zinc-100 transition-all duration-500"
-        :style="{ width: step === 1 ? '0%' : '50%' }"
+        class="absolute top-5 left-[12.5%] h-px bg-zinc-900 dark:bg-zinc-100 transition-all duration-500"
+        :style="{ width: progressWidth }"
       />
-      <ol class="relative grid grid-cols-2 gap-4">
+      <ol class="relative grid grid-cols-4 gap-2">
         <li
-          v-for="(s, i) in [
-            { label: 'Información', sub: 'Nombre, fechas y reglas' },
-            { label: 'Categorías', sub: 'Disciplinas y jurados' },
-          ]"
+          v-for="(s, i) in steps"
           :key="i"
           class="flex flex-col items-center gap-2"
         >
@@ -318,10 +334,10 @@ function finish() {
           </div>
           <div class="text-center">
             <p
-              class="text-sm font-semibold leading-tight"
+              class="text-xs font-semibold leading-tight"
               :class="step >= i + 1 ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-400'"
             >{{ s.label }}</p>
-            <p class="text-xs text-zinc-400 mt-0.5 hidden sm:block">{{ s.sub }}</p>
+            <p class="text-[10px] text-zinc-400 mt-0.5 hidden sm:block">{{ s.sub }}</p>
           </div>
         </li>
       </ol>
@@ -332,96 +348,132 @@ function finish() {
 
       <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
         <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Datos del concurso</h2>
-        <p class="text-xs text-zinc-500 mt-0.5">Información visible en la página pública.</p>
+        <p class="text-xs text-zinc-500 mt-0.5">Nombre y duración del concurso.</p>
       </div>
 
-      <form class="px-8 py-7" @submit.prevent="createContest">
+      <form class="px-8 py-7" @submit.prevent="nextFromInfo">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-7">
-          <!-- Left column: name + dates -->
-          <div class="space-y-7">
-            <div class="space-y-1.5">
-              <Label for="name" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Nombre del concurso <span class="text-red-500">*</span>
-              </Label>
-              <Input
-                id="name"
-                v-model="formData.name"
-                placeholder="Ej. Concurso Internacional de Piano 2026"
-                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
-                autofocus
-              />
-            </div>
-
-            <div class="space-y-1.5">
-              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
-                <CalendarIcon class="w-4 h-4 text-zinc-400" />
-                Fechas del concurso <span class="text-red-500">*</span>
-              </Label>
-              <div v-if="dateRange.start && dateRange.end" class="flex items-center justify-between text-sm text-zinc-600 dark:text-zinc-400 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800">
-                <span class="font-medium">{{ df.format(dateRange.start.toDate(getLocalTimeZone())) }} — {{ df.format(dateRange.end.toDate(getLocalTimeZone())) }}</span>
-                <button type="button" class="text-xs text-zinc-400 hover:text-red-500 transition-colors" @click="dateRange = { start: undefined, end: undefined }">
-                  Borrar
-                </button>
-              </div>
-              <div class="p-4 bg-zinc-50/50 dark:bg-zinc-900/30 rounded-xl border border-zinc-100 dark:border-zinc-900 flex justify-center overflow-hidden">
-                <RangeCalendar
-                  v-model="dateRange"
-                  :number-of-months="1"
-                  @update:start-value="(startDate) => dateRange.start = startDate"
-                />
-              </div>
-            </div>
+          <!-- Name -->
+          <div class="space-y-1.5">
+            <Label for="name" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Nombre del concurso <span class="text-red-500">*</span>
+            </Label>
+            <Input
+              id="name"
+              v-model="formData.name"
+              placeholder="Ej. Concurso Internacional de Piano 2026"
+              class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
+              autofocus
+            />
           </div>
 
-          <!-- Right column: description + rules -->
-          <div class="space-y-7">
-            <div class="space-y-1.5">
-              <Label for="description" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Descripción <span class="text-zinc-400 font-normal text-xs ml-1">opcional</span>
-              </Label>
-              <Textarea
-                id="description"
-                v-model="formData.short_description"
-                placeholder="Breve descripción del concurso..."
-                class="min-h-[140px] border-zinc-200 dark:border-zinc-800 rounded-lg text-sm focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
-              />
+          <!-- Dates -->
+          <div class="space-y-1.5">
+            <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+              <CalendarIcon class="w-4 h-4 text-zinc-400" />
+              Fechas del concurso <span class="text-red-500">*</span>
+            </Label>
+            <div v-if="dateRange.start && dateRange.end" class="flex items-center justify-between text-sm text-zinc-600 dark:text-zinc-400 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800">
+              <span class="font-medium">{{ df.format(dateRange.start.toDate(getLocalTimeZone())) }} — {{ df.format(dateRange.end.toDate(getLocalTimeZone())) }}</span>
+              <button type="button" class="text-xs text-zinc-400 hover:text-red-500 transition-colors" @click="dateRange = { start: undefined, end: undefined }">
+                Borrar
+              </button>
             </div>
-
-            <div class="space-y-1.5">
-              <Label for="rules" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                Reglamento <span class="text-zinc-400 font-normal text-xs ml-1">opcional</span>
-              </Label>
-              <Textarea
-                id="rules"
-                v-model="formData.rules"
-                placeholder="Normas de participación, requisitos de obras, etc."
-                class="min-h-[260px] border-zinc-200 dark:border-zinc-800 rounded-lg text-sm focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
+            <div class="p-4 bg-zinc-50/50 dark:bg-zinc-900/30 rounded-xl border border-zinc-100 dark:border-zinc-900 flex justify-center overflow-hidden">
+              <RangeCalendar
+                v-model="dateRange"
+                :number-of-months="1"
+                @update:start-value="(startDate) => dateRange.start = startDate"
               />
             </div>
           </div>
         </div>
       </form>
 
-      <!-- Footer actions -->
       <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
         <Button type="button" variant="ghost" class="h-10 px-4 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" @click="router.back()">
           Cancelar
         </Button>
         <Button
           type="button"
-          :disabled="!isStep1Valid || isCreating"
+          :disabled="!isStep1Valid"
           class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-          @click="createContest"
+          @click="nextFromInfo"
+        >
+          <span>Siguiente</span>
+          <ArrowRight class="w-4 h-4" />
+        </Button>
+      </div>
+    </div>
+
+    <!-- ── STEP 2: Description ────────────────────────────────────────────────── -->
+    <div v-if="step === 2" class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
+
+      <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
+        <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Descripción</h2>
+        <p class="text-xs text-zinc-500 mt-0.5">Presentación del concurso visible en la página pública. <span class="text-zinc-400">Opcional.</span></p>
+      </div>
+
+      <div class="px-8 py-7">
+        <RichEditor
+          v-model="formData.short_description"
+          placeholder="Presenta el concurso: de qué trata, a quién va dirigido, qué hace especial esta edición..."
+          min-height="280px"
+        />
+      </div>
+
+      <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
+        <Button type="button" variant="ghost" class="h-10 px-4 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 flex items-center gap-2" @click="step = 1">
+          <ArrowLeft class="w-4 h-4" />
+          Atrás
+        </Button>
+        <Button
+          type="button"
+          class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm flex items-center gap-2"
+          @click="step = 3"
+        >
+          <span>Siguiente</span>
+          <ArrowRight class="w-4 h-4" />
+        </Button>
+      </div>
+    </div>
+
+    <!-- ── STEP 3: Reglamento ─────────────────────────────────────────────────── -->
+    <div v-if="step === 3" class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
+
+      <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
+        <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Reglamento</h2>
+        <p class="text-xs text-zinc-500 mt-0.5">Normas de participación, requisitos de obras, criterios de evaluación. <span class="text-zinc-400">Opcional.</span></p>
+      </div>
+
+      <div class="px-8 py-7">
+        <RichEditor
+          v-model="formData.rules"
+          placeholder="Redacta las normas: requisitos de participación, formato de obras, criterios de puntuación..."
+          min-height="280px"
+        />
+      </div>
+
+      <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
+        <Button type="button" variant="ghost" class="h-10 px-4 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 flex items-center gap-2" @click="step = 2">
+          <ArrowLeft class="w-4 h-4" />
+          Atrás
+        </Button>
+        <Button
+          type="button"
+          :disabled="isCreating"
+          class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+          @click="finishContentAndCreate"
         >
           <Loader2 v-if="isCreating" class="w-4 h-4 animate-spin" />
-          <span>{{ isCreating ? 'Creando…' : 'Continuar' }}</span>
+          <span>{{ isCreating ? 'Creando…' : 'Siguiente' }}</span>
           <ArrowRight v-if="!isCreating" class="w-4 h-4" />
         </Button>
       </div>
     </div>
 
-    <!-- ── STEP 2: Categories ────────────────────────────────────────────────── -->
-    <div v-if="step === 2" class="space-y-5">
+    <!-- ── STEP 4: Categories ────────────────────────────────────────────────── -->
+    <div v-if="step === 4" class="space-y-5">
 
       <!-- Contest created banner -->
       <div class="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 px-4 py-3 flex items-center gap-3">
@@ -440,7 +492,6 @@ function finish() {
         </div>
 
         <div class="px-8 py-7 space-y-5">
-          <!-- Input row -->
           <div class="flex gap-2">
             <Input
               v-model="categoryInput"
@@ -459,7 +510,6 @@ function finish() {
             </Button>
           </div>
 
-          <!-- Category list -->
           <div v-if="categories.length" class="space-y-2">
             <div
               v-for="cat in categories"
@@ -509,7 +559,6 @@ function finish() {
           </div>
         </div>
 
-        <!-- Footer -->
         <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
           <p class="text-xs text-zinc-500">Puedes añadir más categorías desde el panel del concurso.</p>
           <Button
@@ -534,18 +583,15 @@ function finish() {
       </DialogHeader>
 
       <div class="p-5 space-y-4">
-        <!-- Search -->
         <div class="relative">
           <Search class="absolute left-3 top-2.5 w-4 h-4 text-zinc-400" />
           <Input v-model="judgeSearch" placeholder="Buscar jurado..." class="pl-9 h-9 border-zinc-200 dark:border-zinc-700 text-sm" />
         </div>
 
-        <!-- Loading -->
         <div v-if="isLoadingPool" class="flex items-center justify-center py-8">
           <Loader2 class="w-6 h-6 animate-spin text-zinc-400" />
         </div>
 
-        <!-- Judge table -->
         <div v-else class="min-h-[336px] rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
           <div v-if="!filteredPool.length" class="text-center py-12 text-sm text-zinc-400">
             No se encontraron jurados en el pool
@@ -605,7 +651,6 @@ function finish() {
           </Table>
         </div>
 
-        <!-- Pagination -->
         <div v-if="filteredPool.length > JUDGE_PAGE_SIZE" class="flex items-center justify-between pt-1">
           <p class="text-[11px] text-zinc-500 tabular-nums">
             Página {{ judgePickerPage }} de {{ judgePickerPageCount }} · {{ filteredPool.length }} jurado(s)
@@ -632,7 +677,6 @@ function finish() {
           </div>
         </div>
 
-        <!-- Selection count -->
         <p v-if="judgesDiffCount > 0" class="text-xs font-bold text-zinc-500 text-center">
           <span v-if="judgesToAddCount" class="text-blue-600 dark:text-blue-400">+{{ judgesToAddCount }}</span>
           <span v-if="judgesToAddCount && judgesToRemoveCount"> · </span>

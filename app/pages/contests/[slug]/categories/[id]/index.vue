@@ -272,7 +272,14 @@ async function openRankingDialog() {
 }
 
 // Promotion
-const handleStartRound = async (id: string) => { await contestStore.startRound(id); toast.success('Ronda iniciada') }
+const handleStartRound = async (id: string) => {
+  if (currentContest.value?.status !== 'active') {
+    toast.error('El concurso debe estar activo para iniciar la ronda')
+    return
+  }
+  await contestStore.startRound(id)
+  toast.success('Ronda iniciada')
+}
 const handleDeleteRound = async (id: string) => {
   const round = categoryRounds.value.find(r => r.id === id) as any
   const msg = round?.is_ranking
@@ -582,13 +589,16 @@ function roundStatusClass(status: string) {
         </div>
       </div>
 
-      <div class="flex justify-center pt-16 border-t-2 border-dashed border-zinc-100 dark:border-zinc-800">
-        <MotionButton 
+      <div class="flex flex-col items-center justify-center pt-16 border-t-2 border-dashed border-zinc-100 dark:border-zinc-800 gap-3">
+        <MotionButton
           label="Iniciar"
-          :disabled="categoryParticipants.length < 1 || categoryJudges.length < 1"
+          :disabled="categoryParticipants.length < 1 || categoryJudges.length < 1 || currentContest.value?.status !== 'active'"
           @click="handleStartCategory"
           class="shadow-2xl hover:scale-105 transition-all"
         />
+        <p v-if="currentContest.value?.status !== 'active'" class="text-xs text-amber-600 dark:text-amber-400 font-medium text-center">
+          Activa el concurso para poder iniciar la categoría.
+        </p>
       </div>
     </div>
 
@@ -693,6 +703,8 @@ function roundStatusClass(status: string) {
                         v-if="round.status === 'pending'"
                         size="sm"
                         class="h-8 px-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold uppercase text-[9px] tracking-widest gap-1.5 hover:bg-zinc-700 dark:hover:bg-zinc-300"
+                        :disabled="currentContest.value?.status !== 'active'"
+                        :title="currentContest.value?.status !== 'active' ? 'El concurso debe estar activo' : ''"
                         @click="handleStartRound(round.id)"
                       >
                         <Play class="w-3 h-3 fill-current" /> Iniciar
@@ -859,15 +871,15 @@ function roundStatusClass(status: string) {
       </DialogContent>
     </Dialog>
 
-    <Drawer v-model:open="isConfigDrawerOpen">
+    <Drawer v-model:open="isConfigDrawerOpen" :snap-points="[0.7]">
       <DrawerContent v-if="category" class="bg-white dark:bg-zinc-950 border-t-2 border-zinc-100 dark:border-zinc-800">
-        <div class="mx-auto w-full max-w-2xl px-6 py-8">
+        <div class="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6 sm:py-8">
           <DrawerHeader>
             <DrawerTitle>Configuración de Categoría</DrawerTitle>
             <DrawerDescription>Ajusta el nombre y restricciones de edad para los participantes.</DrawerDescription>
           </DrawerHeader>
-          
-          <div class="p-6 space-y-8">
+
+          <div class="overflow-y-auto p-4 sm:p-6 space-y-6">
             <div class="grid gap-3">
               <Label class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-400">
                 <Medal class="w-3.5 h-3.5" /> Nombre de la Categoría
