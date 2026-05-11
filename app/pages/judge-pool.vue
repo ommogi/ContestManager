@@ -13,6 +13,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { toast } from 'vue-sonner'
 import { useJudgePoolStore } from '~/stores/judge-pool'
 import { storeToRefs } from 'pinia'
@@ -76,13 +80,24 @@ async function handleAddJudge() {
   }
 }
 
-async function handleDeleteJudge(id: string) {
-  if (!confirm('¿Estás seguro de que quieres eliminar a este jurado del pool?')) return
+const showDeleteJudgeDialog = ref(false)
+const deletingJudgeId = ref<string | null>(null)
+
+function requestDeleteJudge(id: string) {
+  deletingJudgeId.value = id
+  showDeleteJudgeDialog.value = true
+}
+
+async function confirmDeleteJudge() {
+  if (!deletingJudgeId.value) return
+  showDeleteJudgeDialog.value = false
   try {
-    await store.removeJudge(id)
+    await store.removeJudge(deletingJudgeId.value)
     toast.success('Jurado eliminado correctamente')
   } catch (e: any) {
     toast.error(e?.data?.statusMessage || 'No se pudo eliminar al jurado')
+  } finally {
+    deletingJudgeId.value = null
   }
 }
 </script>
@@ -230,7 +245,7 @@ async function handleDeleteJudge(id: string) {
                   variant="ghost"
                   size="icon"
                   class="text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all opacity-0 group-hover:opacity-100"
-                  @click="handleDeleteJudge(judge.id)"
+                  @click="requestDeleteJudge(judge.id)"
                 >
                   <Trash2 class="w-4 h-4" />
                 </Button>
@@ -240,5 +255,21 @@ async function handleDeleteJudge(id: string) {
         </Table>
       </CardContent>
     </Card>
+
+    <!-- Delete judge dialog -->
+    <AlertDialog v-model:open="showDeleteJudgeDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Eliminar jurado</AlertDialogTitle>
+          <AlertDialogDescription>
+            ¿Estás seguro de que quieres eliminar a este jurado del pool? Esta acción no se puede deshacer.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction @click="confirmDeleteJudge">Eliminar</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

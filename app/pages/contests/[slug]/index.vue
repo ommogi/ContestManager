@@ -10,6 +10,16 @@ import { toast } from 'vue-sonner'
 import CreateCategoryDialog from '~/components/contest/CreateCategoryDialog.vue'
 import EditContestDrawer from '~/components/contest/EditContestDrawer.vue'
 import { Input } from '@/components/ui/input'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { useContestStore } from '@/stores/contest'
 import { storeToRefs } from 'pinia'
 import { getStatusClasses, getTypeClasses, getModeClasses, getTierClasses, getStatusBannerClasses, getTypeBannerClasses, getModeBannerClasses } from '@/utils/styles'
@@ -45,15 +55,21 @@ const DEFAULT_COVER = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/objec
 const coverImage = computed(() => currentContest.value?.cover_image_url || DEFAULT_COVER)
 
 const parsedDescription = computed(() => marked.parse(currentContest.value?.description || '') as string)
-const parsedRules = computed(() => marked.parse((currentContest.value?.settings as any)?.rules || '') as string)
+const parsedRules = computed(() => marked.parse(currentContest.value?.rules || '') as string)
 
 // ── Activate contest (draft → active) ────────────────────────────────────────
 const activating = ref(false)
+const showActivateDialog = ref(false)
+
+function requestActivateContest() {
+  showActivateDialog.value = true
+}
+
 async function activateContest() {
   const c = currentContest.value as any
   if (!c) return
-  if (!confirm('¿Iniciar el concurso? Se consumirá 1 activación. Los participantes podrán empezar a competir.')) return
   activating.value = true
+  showActivateDialog.value = false
   try {
     await contestStore.updateContest({ status: 'active' } as any)
     toast.success('Concurso iniciado')
@@ -152,16 +168,15 @@ const editingRules = ref(false)
 const rulesDraft = ref('')
 
 function startEditRules() {
-  const raw = (currentContest.value?.settings as any)?.rules || ''
+  const raw = currentContest.value?.rules || ''
   rulesDraft.value = raw.startsWith('<') ? raw : marked.parse(raw) as string
   editingRules.value = true
 }
 
 async function saveRules() {
   try {
-    const existingSettings = (currentContest.value?.settings as any) || {}
     await contestStore.updateContest({
-      settings: { ...existingSettings, rules: rulesDraft.value || null }
+      rules: rulesDraft.value || null
     } as any)
     toast.success('Reglamento actualizado')
     editingRules.value = false
@@ -171,15 +186,26 @@ async function saveRules() {
 }
 
 async function handleDeleteCategory(catId: string, catName: string) {
-  if (!confirm(`¿Eliminar la categoría "${catName}"? Se eliminarán todas las rondas y participantes asociados.`)) return
-  deletingCategoryId.value = catId
+  deletingCategoryTarget.value = { id: catId, name: catName }
+  showDeleteDialog.value = true
+}
+
+const showDeleteDialog = ref(false)
+const deletingCategoryTarget = ref<{ id: string; name: string } | null>(null)
+
+async function confirmDeleteCategory() {
+  if (!deletingCategoryTarget.value) return
+  const { id, name } = deletingCategoryTarget.value
+  showDeleteDialog.value = false
+  deletingCategoryId.value = id
   try {
-    await contestStore.deleteCategory(catId)
+    await contestStore.deleteCategory(id)
     toast.success('Categoría eliminada')
   } catch (e: any) {
     toast.error(e?.data?.statusMessage || e?.statusMessage || 'Error al eliminar la categoría')
   } finally {
     deletingCategoryId.value = null
+    deletingCategoryTarget.value = null
   }
 }
 </script>
@@ -264,7 +290,7 @@ async function handleDeleteCategory(catId: string, catName: string) {
             size="sm"
             class="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 font-bold border-2 rounded-md transition-all uppercase tracking-tighter text-[10px]"
             :disabled="activating"
-            @click="activateContest"
+            @click="requestActivateContest"
           >
             <Loader2 v-if="activating" class="w-4 h-4 animate-spin" />
             <Play v-else class="w-4 h-4" />
@@ -558,7 +584,7 @@ async function handleDeleteCategory(catId: string, catName: string) {
             <Pencil class="w-3.5 h-3.5" /> Editar
           </Button>
           <div
-            v-if="(currentContest?.settings as any)?.rules"
+            v-if="currentContest?.rules"
             class="rich-content text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed pr-24"
             v-html="parsedRules"
           />
@@ -588,5 +614,43 @@ async function handleDeleteCategory(catId: string, catName: string) {
       v-model:open="isDrawerOpen" 
       :contest="currentContest" 
     />
+
+    <!-- Activate contest dialog -->
+    <AlertDialog v-model:open="showActivateDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Iniciar concurso</AlertDialogTitle>
+          <AlertDialogDescription>
+            Se consumirá 1 activación. Los participantes podrán empezar a competir. Esta acción no se puede deshacer.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction :disabled="activating" @click="activateContest">
+            <Loader2 v-if="activating" class="w-3.5 h-3.5 animate-spin mr-1" />
+            Iniciar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <!-- Delete category dialog -->
+    <AlertDialog v-model:open="showDeleteDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Eliminar categoría</AlertDialogTitle>
+          <AlertDialogDescription>
+            ¿Eliminar la categoría "{{ deletingCategoryTarget?.name }}"? Se eliminarán todas las rondas y participantes asociados. Esta acción no se puede deshacer.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction :disabled="!!deletingCategoryId" @click="confirmDeleteCategory">
+            <Loader2 v-if="deletingCategoryId" class="w-3.5 h-3.5 animate-spin mr-1" />
+            Eliminar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

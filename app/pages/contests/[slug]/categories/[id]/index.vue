@@ -48,6 +48,7 @@ import JudgePoolTable from '@/components/judge-pool/JudgePoolTable.vue'
 import PromotionTable from '@/components/promotion/PromotionTable.vue'
 import ParticipantsTable from '@/components/participants/ParticipantsTable.vue'
 import JudgesTable from '@/components/judges/JudgesTable.vue'
+import { apiClient } from '~/api/apiClient'
 
 const route = useRoute()
 const router = useRouter()
@@ -124,9 +125,8 @@ const handleBulkAddFromPool = async () => {
     const selectedIds = selectedPoolIds.value
     const selectedJudges = judgePool.value.filter(j => selectedIds.includes(j.id))
     
-    // Perform bulk insertion
     await Promise.all(selectedJudges.map(judge => 
-      $fetch(`/api/contests/${currentContest.value!.id}/members` as any, {
+      apiClient(`/api/contests/${currentContest.value!.id}/members`, {
         method: 'POST', body: { 
           email: judge.email, 
           full_name: judge.full_name,
@@ -136,7 +136,7 @@ const handleBulkAddFromPool = async () => {
     ))
 
     toast.success(`${selectedIds.length} jueces añadidos correctamente`)
-    const mems = await ($fetch as any)(`/api/contests/${currentContest.value.id}/members`)
+    const mems = await apiClient(`/api/contests/${currentContest.value.id}/members`)
     members.value = mems || []
     isJudgePoolOpen.value = false
     selectedPoolIds.value = []
@@ -151,8 +151,7 @@ const handleInviteJudge = async () => {
   if (!newJudgeForm.value.email.trim() || !currentContest.value?.id) return
   isInvitingJudge.value = true
   try {
-    // invite to contest
-    await $fetch(`/api/contests/${currentContest.value.id}/members` as any, {
+    await apiClient(`/api/contests/${currentContest.value.id}/members`, {
       method: 'POST', body: { 
         email: newJudgeForm.value.email, 
         full_name: newJudgeForm.value.full_name,
@@ -160,7 +159,6 @@ const handleInviteJudge = async () => {
       }
     })
     
-    // Also save to pool if they have a name
     if (newJudgeForm.value.full_name.trim() && currentContest.value.organization_id) {
        await contestStore.saveToJudgePool(currentContest.value.organization_id, {
           email: newJudgeForm.value.email,
@@ -171,7 +169,7 @@ const handleInviteJudge = async () => {
 
     toast.success('Invitación enviada y guardado en el pool')
     newJudgeForm.value = { email: '', full_name: '', specialty: '' }
-    const mems = await ($fetch as any)(`/api/contests/${currentContest.value.id}/members`)
+    const mems = await apiClient(`/api/contests/${currentContest.value.id}/members`)
     members.value = mems || []
   } catch (e) { toast.error('Error al invitar') } finally { isInvitingJudge.value = false }
 }
@@ -179,7 +177,7 @@ const handleInviteJudge = async () => {
 const handleSelectFromPool = async (judge: JudgePoolMember) => {
   if (!currentContest.value?.id) return
   try {
-    await $fetch(`/api/contests/${currentContest.value.id}/members` as any, {
+    await apiClient(`/api/contests/${currentContest.value.id}/members`, {
       method: 'POST', body: { 
         email: judge.email, 
         full_name: judge.full_name,
@@ -187,7 +185,7 @@ const handleSelectFromPool = async (judge: JudgePoolMember) => {
       }
     })
     toast.success(`${judge.full_name} añadido al concurso`)
-    const mems = await ($fetch as any)(`/api/contests/${currentContest.value.id}/members`)
+    const mems = await apiClient(`/api/contests/${currentContest.value.id}/members`)
     members.value = mems || []
     isJudgePoolOpen.value = false
   } catch (e) { toast.error('Error al añadir') }
@@ -207,7 +205,7 @@ const handleStartCategory = async () => {
   try {
     const data = await contestStore.createRound(categoryId, 'Ronda 1', 1) as any
     if (!data) return
-    await $fetch(`/api/rounds/${data.id}/participants/bulk` as any, {
+    await apiClient(`/api/rounds/${data.id}/participants/bulk`, {
       method: 'POST', body: { participantIds: categoryParticipants.value.map(p => p.id) }
     })
     toast.success('Categoría iniciada')
@@ -266,7 +264,7 @@ const isRankingOpen = ref(false)
 const rankingData = ref<any>(null)
 async function openRankingDialog() {
   try {
-    rankingData.value = await $fetch<any>(`/api/categories/${categoryId}/ranking`)
+    rankingData.value = await apiClient<any>(`/api/categories/${categoryId}/ranking`)
     isRankingOpen.value = true
   } catch (e) { toast.error('Error al cargar ranking') }
 }
@@ -280,17 +278,27 @@ const handleStartRound = async (id: string) => {
   await contestStore.startRound(id)
   toast.success('Ronda iniciada')
 }
-const handleDeleteRound = async (id: string) => {
+
+const showDeleteRoundDialog = ref(false)
+const deletingRoundTarget = ref<{ id: string; isRanking: boolean } | null>(null)
+
+function requestDeleteRound(id: string) {
   const round = categoryRounds.value.find(r => r.id === id) as any
-  const msg = round?.is_ranking
-    ? '¿Despublicar ranking? Se reabrirá la categoría y la ronda final volverá a estar activa.'
-    : '¿Eliminar la ronda actual? Se perderán todos sus datos (notas, asignaciones). La ronda anterior volverá a estar activa.'
-  if (!confirm(msg)) return
+  deletingRoundTarget.value = { id, isRanking: round?.is_ranking || false }
+  showDeleteRoundDialog.value = true
+}
+
+async function confirmDeleteRound() {
+  if (!deletingRoundTarget.value) return
+  const { id, isRanking } = deletingRoundTarget.value
+  showDeleteRoundDialog.value = false
   try {
     await contestStore.deleteRound(id)
-    toast.success(round?.is_ranking ? 'Ranking despublicado' : 'Ronda eliminada')
+    toast.success(isRanking ? 'Ranking despublicado' : 'Ronda eliminada')
   } catch (e: any) {
     toast.error(e?.statusMessage || e?.data?.statusMessage || 'Error al eliminar ronda')
+  } finally {
+    deletingRoundTarget.value = null
   }
 }
 const handleCreateRound = async () => {
@@ -312,9 +320,16 @@ const handleDeleteParticipant = async (id: string) => {
 const selectedParticipantIds = ref<string[]>([])
 const selectedJudgeIds = ref<string[]>([])
 
-const handleBulkDeleteParticipants = async () => {
+const showBulkDeleteParticipantsDialog = ref(false)
+const showBulkRemoveJudgesDialog = ref(false)
+
+function requestBulkDeleteParticipants() {
+  showBulkDeleteParticipantsDialog.value = true
+}
+
+async function confirmBulkDeleteParticipants() {
   const ids = [...selectedParticipantIds.value]
-  if (!confirm(`¿Eliminar ${ids.length} participantes?`)) return
+  showBulkDeleteParticipantsDialog.value = false
   try {
     const results = await Promise.all(ids.map(id => contestStore.deleteParticipant(id)))
     const refunded = results.filter((r: any) => r?.refunded).length
@@ -326,9 +341,13 @@ const handleBulkDeleteParticipants = async () => {
   } catch (e) { toast.error('Error al eliminar participantes') }
 }
 
-const handleBulkRemoveJudges = async () => {
+function requestBulkRemoveJudges() {
+  showBulkRemoveJudgesDialog.value = true
+}
+
+async function confirmBulkRemoveJudges() {
   const ids = [...selectedJudgeIds.value]
-  if (!confirm(`¿Quitar ${ids.length} jurados de la mesa?`)) return
+  showBulkRemoveJudgesDialog.value = false
   try {
     await Promise.all(ids.map(id => contestStore.removeMember(id)))
     toast.success(`${ids.length} jurados retirados`)
@@ -459,7 +478,7 @@ function roundStatusClass(status: string) {
                   size="sm"
                   variant="destructive"
                   class="h-8 font-bold uppercase text-[9px] tracking-widest px-3 gap-1.5"
-                  @click="handleBulkDeleteParticipants"
+                  @click="requestBulkDeleteParticipants"
                 >
                   <Trash2 class="w-3.5 h-3.5" /> Eliminar {{ selectedParticipantIds.length }}
                 </Button>
@@ -501,7 +520,7 @@ function roundStatusClass(status: string) {
                   size="sm"
                   variant="destructive"
                   class="h-8 font-bold uppercase text-[9px] tracking-widest px-3 gap-1.5"
-                  @click="handleBulkRemoveJudges"
+                  @click="requestBulkRemoveJudges"
                 >
                   <Trash2 class="w-3.5 h-3.5" /> Quitar {{ selectedJudgeIds.length }}
                 </Button>
@@ -715,7 +734,7 @@ function roundStatusClass(status: string) {
                         variant="ghost"
                         class="h-8 w-8 p-0 text-zinc-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
                         title="Eliminar ronda actual"
-                        @click="handleDeleteRound(round.id)"
+                        @click="requestDeleteRound(round.id)"
                       >
                         <Trash2 class="w-3.5 h-3.5" />
                       </Button>
@@ -959,5 +978,57 @@ function roundStatusClass(status: string) {
         </div>
       </DrawerContent>
     </Drawer>
+
+    <!-- Delete round dialog -->
+    <AlertDialog v-model:open="showDeleteRoundDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{{ deletingRoundTarget?.isRanking ? 'Despublicar ranking' : 'Eliminar ronda' }}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {{ deletingRoundTarget?.isRanking
+              ? 'Se reabrirá la categoría y la ronda final volverá a estar activa.'
+              : 'Se perderán todos los datos de esta ronda (notas, asignaciones). La ronda anterior volverá a estar activa.' }}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction @click="confirmDeleteRound">
+            {{ deletingRoundTarget?.isRanking ? 'Despublicar' : 'Eliminar' }}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <!-- Bulk delete participants dialog -->
+    <AlertDialog v-model:open="showBulkDeleteParticipantsDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Eliminar participantes</AlertDialogTitle>
+          <AlertDialogDescription>
+            ¿Eliminar {{ selectedParticipantIds.length }} participante{{ selectedParticipantIds.length === 1 ? '' : 's' }}? Se reembolsarán los tickets correspondientes.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction @click="confirmBulkDeleteParticipants">Eliminar</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <!-- Bulk remove judges dialog -->
+    <AlertDialog v-model:open="showBulkRemoveJudgesDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Retirar jurados</AlertDialogTitle>
+          <AlertDialogDescription>
+            ¿Quitar {{ selectedJudgeIds.length }} jurado{{ selectedJudgeIds.length === 1 ? '' : 's' }} de la mesa?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction @click="confirmBulkRemoveJudges">Retirar</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>
