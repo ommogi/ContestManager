@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select'
 import { parseDate, getLocalTimeZone, type DateValue } from '@internationalized/date'
 import { DIAL_CODES, findCountryByName } from '@/utils/countries'
+import { validateDni } from '@/utils/dni'
 
 definePageMeta({
   layout: 'auth',
@@ -34,7 +35,7 @@ const { data, pending, error: fetchError } = await useFetch<{
     cover_image_url: string | null; type: string; status: string;
     starts_at: string | null; ends_at: string | null; registration_open: boolean;
     entry_fee_cents: number; org_charges_enabled: boolean;
-    settings: Record<string, unknown> | null
+    rules: string | null; settings: Record<string, unknown> | null
   },
   categories: Array<{
     id: string; name: string; description: string | null; status: string;
@@ -47,15 +48,15 @@ const { data, pending, error: fetchError } = await useFetch<{
 
 const contest = computed(() => data.value?.contest)
 const categories = computed(() => data.value?.categories ?? [])
-const hasRules = computed(() => !!(contest.value?.settings as any)?.rules)
+const hasRules = computed(() => !!contest.value?.rules)
 
-// ── Phase: info → enrollment ────────────────────────────────────────────
+// ── Phase: info → enrollment ──────────────────────────────────────────────
 const phase = ref<'info' | 'enrollment'>('info')
 const accepted = ref(false)
 const activeTab = ref<'description' | 'reglamento'>('description')
 
 const parsedDescription = computed(() => marked.parse(contest.value?.description || '') as string)
-const parsedRules = computed(() => marked.parse((contest.value?.settings as any)?.rules || '') as string)
+const parsedRules = computed(() => marked.parse(contest.value?.rules || '') as string)
 
 // ── Auth gate ────────────────────────────────────────────────────────────
 const isAuthed = computed(() => authStore.isAuthenticated)
@@ -136,6 +137,12 @@ function ageAt(birthdate: string, ref: string | null): number | null {
 
 const computedAge = computed(() => ageAt(form.birthdate, contest.value?.starts_at ?? null))
 
+const dniError = computed(() => {
+  if (!form.dni) return ''
+  const r = validateDni(form.dni)
+  return r.valid ? '' : (r.error || 'Documento no válido')
+})
+
 function categoryEligible(c: any, age: number | null) {
   if (age == null) return true // don't filter until birthdate entered
   if (c.min_age != null && age < c.min_age) return false
@@ -177,6 +184,13 @@ async function submit() {
   if (!form.category_id || !form.first_name || !form.last_name || !form.birthdate) {
     toast.error('Completa los campos obligatorios.')
     return
+  }
+  if (form.dni) {
+    const dniResult = validateDni(form.dni)
+    if (!dniResult.valid) {
+      toast.error(dniResult.error || 'DNI/NIE no válido')
+      return
+    }
   }
   submitting.value = true
   try {
@@ -259,7 +273,8 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
     <!-- Main -->
     <div v-else class="space-y-4">
       <!-- Hero -->
-      <Card class="shadow-lg overflow-hidden">
+      <div class="hero-wrapper" :class="phase === 'enrollment' ? 'hero-wrapper--narrow' : ''">
+        <Card class="shadow-lg overflow-hidden">
         <div
           v-if="contest.cover_image_url"
           class="h-32 bg-cover bg-center"
@@ -277,7 +292,8 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
             Inicio: {{ new Date(contest.starts_at).toLocaleDateString() }}
           </div>
         </CardHeader>
-      </Card>
+        </Card>
+      </div>
 
       <!-- Closed banner -->
       <Card v-if="registrationClosed" class="border-destructive/50">
@@ -289,223 +305,266 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
       </Card>
 
       <!-- ── PHASE: Info (Description + Rules + Acceptance) ─────────────── -->
-      <Card v-else-if="phase === 'info'" class="shadow-lg">
-        <CardHeader>
-          <CardTitle class="text-base">Información del concurso</CardTitle>
-          <CardDescription>
-            Lee la descripción y el reglamento antes de inscribirte
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-5">
-          <Tabs v-model="activeTab">
-            <TabsList class="w-full">
-              <TabsTrigger value="description" class="flex-1">Descripción</TabsTrigger>
-              <TabsTrigger value="reglamento" class="flex-1">Reglamento</TabsTrigger>
-            </TabsList>
+      <Transition name="phase-swap" mode="out-in">
+        <Card v-if="phase === 'info'" key="info" class="shadow-lg phase-card">
+          <CardHeader>
+            <CardTitle class="text-base">Información del concurso</CardTitle>
+            <CardDescription>
+              Lee la descripción y el reglamento antes de inscribirte
+            </CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-5">
+            <Tabs v-model="activeTab">
+              <TabsList class="w-full">
+                <TabsTrigger value="description" class="flex-1">Descripción</TabsTrigger>
+                <TabsTrigger value="reglamento" class="flex-1">Reglamento</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="description" class="mt-4">
-              <div
-                v-if="contest.description"
-                class="rich-content text-sm prose prose-sm max-w-none"
-                v-html="parsedDescription"
-              />
-              <p v-else class="text-sm text-muted-foreground py-4 text-center">
-                El organizador no ha añadido una descripción.
-              </p>
-            </TabsContent>
-
-            <TabsContent value="reglamento" class="mt-4">
-              <div
-                v-if="(contest.settings as any)?.rules"
-                class="rich-content text-sm prose prose-sm max-w-none"
-                v-html="parsedRules"
-              />
-              <div v-else class="flex flex-col items-center gap-2 py-6 text-center">
-                <FileText class="w-8 h-8 text-muted-foreground/40" />
-                <p class="text-sm text-muted-foreground">
-                  El organizador no ha publicado el reglamento.
+              <TabsContent value="description" class="mt-4">
+                <div
+                  v-if="contest.description"
+                  class="rich-content text-sm prose prose-sm max-w-none"
+                  v-html="parsedDescription"
+                />
+                <p v-else class="text-sm text-muted-foreground py-4 text-center">
+                  El organizador no ha añadido una descripción.
                 </p>
+              </TabsContent>
+
+              <TabsContent value="reglamento" class="mt-4">
+                <div
+                  v-if="contest.rules"
+                  class="rich-content text-sm prose prose-sm max-w-none"
+                  v-html="parsedRules"
+                />
+                <div v-else class="flex flex-col items-center gap-2 py-6 text-center">
+                  <FileText class="w-8 h-8 text-muted-foreground/40" />
+                  <p class="text-sm text-muted-foreground">
+                    El organizador no ha publicado el reglamento.
+                  </p>
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            <!-- Entry fee -->
+            <div v-if="requiresPayment" class="rounded-lg border border-border bg-muted/40 p-3 flex items-center justify-between">
+              <div>
+                <p class="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cuota de inscripción</p>
+                <p class="text-xs text-muted-foreground">Pago seguro vía Stripe</p>
               </div>
-            </TabsContent>
-          </Tabs>
-
-          <!-- Entry fee -->
-          <div v-if="requiresPayment" class="rounded-lg border border-border bg-muted/40 p-3 flex items-center justify-between">
-            <div>
-              <p class="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cuota de inscripción</p>
-              <p class="text-xs text-muted-foreground">Pago seguro vía Stripe</p>
-            </div>
-            <p class="text-xl font-bold">€{{ ((contest.entry_fee_cents || 0) / 100).toFixed(2) }}</p>
-          </div>
-
-          <!-- Acceptance checkbox -->
-          <div class="flex items-start gap-3 pt-2">
-            <Checkbox
-              id="accept-terms"
-              v-model="accepted"
-              class="mt-0.5"
-            />
-            <label
-              for="accept-terms"
-              class="text-sm leading-snug cursor-pointer select-none"
-            >
-              He leído y acepto las bases y condiciones
-            </label>
-          </div>
-
-          <Button
-            class="w-full"
-            :disabled="!accepted"
-            @click="phase = 'enrollment'"
-          >
-            Continuar inscripción
-            <ArrowRight class="w-4 h-4 ml-2" />
-          </Button>
-        </CardContent>
-      </Card>
-
-      <!-- Auth required -->
-      <Card v-else-if="!isAuthed" class="shadow-lg border-primary/30">
-        <CardContent class="py-8 text-center space-y-4">
-          <Lock class="w-8 h-8 mx-auto text-muted-foreground" />
-          <div class="space-y-1">
-            <p class="font-semibold">Necesitas una cuenta</p>
-            <p class="text-sm text-muted-foreground">
-              Para inscribirte en <strong>{{ contest.name }}</strong> debes iniciar sesión o registrarte primero.
-            </p>
-          </div>
-          <div class="flex flex-col sm:flex-row gap-2 pt-2">
-            <Button class="flex-1" @click="navigateTo(loginHref)">Iniciar sesión</Button>
-            <Button variant="outline" class="flex-1" @click="navigateTo(signupHref)">Crear cuenta</Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <!-- Form -->
-      <Card v-else class="shadow-lg">
-        <CardHeader>
-          <div class="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              class="-ml-2 h-8 w-8"
-              @click="phase = 'info'"
-            >
-              <ArrowLeft class="w-4 h-4" />
-            </Button>
-            <div>
-              <CardTitle class="text-base">Datos de inscripción</CardTitle>
-              <CardDescription>
-                Completa tus datos. La categoría se filtrará por edad al indicar tu fecha de nacimiento.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form @submit.prevent="submit" class="space-y-4">
-            <div class="grid grid-cols-2 gap-3">
-              <div class="space-y-1.5">
-                <Label for="first_name">Nombre *</Label>
-                <Input id="first_name" v-model="form.first_name" required />
-              </div>
-              <div class="space-y-1.5">
-                <Label for="last_name">Apellidos *</Label>
-                <Input id="last_name" v-model="form.last_name" required />
-              </div>
+              <p class="text-xl font-bold">€{{ ((contest.entry_fee_cents || 0) / 100).toFixed(2) }}</p>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
-              <div class="space-y-1.5">
-                <Label>Fecha de nacimiento *</Label>
-                <DatePicker v-model="birthdateValue" placeholder="Selecciona tu fecha" />
-                <p v-if="computedAge != null" class="text-xs text-muted-foreground">
-                  Edad al inicio del concurso: <strong>{{ computedAge }}</strong> años
-                </p>
-              </div>
-              <div class="space-y-1.5">
-                <Label for="dni">DNI / Documento</Label>
-                <Input id="dni" v-model="form.dni" />
-              </div>
-            </div>
-
-            <div class="space-y-4">
-              <div class="space-y-1.5">
-                <Label>País</Label>
-                <CountrySelect v-model="form.country" placeholder="Selecciona país…" />
-              </div>
-              <div class="space-y-1.5">
-                <Label>Teléfono</Label>
-                <PhoneInput v-model="form.phone" :default-dial="defaultDial" placeholder="600 11 22 33" />
-              </div>
-            </div>
-
-            <div class="space-y-1.5">
-              <Label for="email">Email de contacto</Label>
-              <Input id="email" v-model="form.email" type="email" />
-            </div>
-
-            <!-- Category -->
-            <div class="space-y-1.5">
-              <Label for="category">Categoría *</Label>
-              <Select v-model="form.category_id">
-                <SelectTrigger id="category">
-                  <SelectValue placeholder="Selecciona una categoría…" />
-                </SelectTrigger>
-                <SelectContent>
-                  <template v-if="eligibleCategories.length">
-                    <SelectItem
-                      v-for="c in eligibleCategories"
-                      :key="c.id"
-                      :value="c.id"
-                    >
-                      <div class="flex flex-col gap-0.5">
-                        <span class="font-medium">{{ c.name }}</span>
-                        <span class="text-xs text-muted-foreground">
-                          <template v-if="c.min_age != null || c.max_age != null">
-                            {{ c.min_age ?? '–' }}–{{ c.max_age ?? '–' }} años ·
-                          </template>
-                          <template v-if="c.max_participants != null">
-                            {{ c.current_count }}/{{ c.max_participants }} plazas
-                          </template>
-                          <template v-else>
-                            {{ c.current_count }} inscritos
-                          </template>
-                        </span>
-                      </div>
-                    </SelectItem>
-                  </template>
-                  <div v-else class="px-3 py-4 text-xs text-muted-foreground text-center">
-                    <template v-if="form.birthdate">
-                      No hay categorías disponibles para tu edad.
-                    </template>
-                    <template v-else>
-                      Introduce tu fecha de nacimiento para ver categorías.
-                    </template>
-                  </div>
-                </SelectContent>
-              </Select>
-              <div v-if="form.birthdate && categories.length && !eligibleCategories.length" class="flex items-start gap-1.5 text-xs text-muted-foreground mt-1">
-                <Users class="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                <span>
-                  Ninguna categoría admite tu edad ({{ computedAge }} años) o todas están llenas.
-                </span>
-              </div>
+            <!-- Acceptance checkbox -->
+            <div class="flex items-start gap-3 pt-2">
+              <Checkbox
+                id="accept-terms"
+                v-model="accepted"
+                class="mt-0.5"
+              />
+              <label
+                for="accept-terms"
+                class="text-sm leading-snug cursor-pointer select-none"
+              >
+                He leído y acepto las bases y condiciones
+              </label>
             </div>
 
             <Button
-              type="submit"
               class="w-full"
-              :disabled="submitting || !form.category_id"
+              :disabled="!accepted"
+              @click="phase = 'enrollment'"
             >
-              <Loader2 v-if="submitting" class="w-4 h-4 mr-2 animate-spin" />
-              <Trophy v-else class="w-4 h-4 mr-2" />
-              {{ submitting
-                ? (requiresPayment ? 'Redirigiendo al pago…' : 'Enviando…')
-                : (requiresPayment ? 'Pagar e inscribirse' : 'Confirmar inscripción') }}
+              Continuar inscripción
+              <ArrowRight class="w-4 h-4 ml-2" />
             </Button>
-          </form>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+
+        <!-- Auth required -->
+        <Card v-else-if="!isAuthed" key="auth" class="shadow-lg border-primary/30 phase-card">
+          <CardContent class="py-8 text-center space-y-4">
+            <Lock class="w-8 h-8 mx-auto text-muted-foreground" />
+            <div class="space-y-1">
+              <p class="font-semibold">Necesitas una cuenta</p>
+              <p class="text-sm text-muted-foreground">
+                Para inscribirte en <strong>{{ contest.name }}</strong> debes iniciar sesión o registrarte primero.
+              </p>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2 pt-2">
+              <Button class="flex-1" @click="navigateTo(loginHref)">Iniciar sesión</Button>
+              <Button variant="outline" class="flex-1" @click="navigateTo(signupHref)">Crear cuenta</Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <!-- Enrollment form -->
+        <Card v-else key="enrollment" class="shadow-lg phase-card phase-card--narrow">
+          <CardHeader>
+            <div class="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="-ml-2 h-8 w-8"
+                @click="phase = 'info'"
+              >
+                <ArrowLeft class="w-4 h-4" />
+              </Button>
+              <div>
+                <CardTitle class="text-base">Datos de inscripción</CardTitle>
+                <CardDescription>
+                  Completa tus datos. La categoría se filtrará por edad al indicar tu fecha de nacimiento.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <form @submit.prevent="submit" class="space-y-4">
+              <div class="grid grid-cols-2 gap-3">
+                <div class="space-y-1.5">
+                  <Label for="first_name">Nombre *</Label>
+                  <Input id="first_name" v-model="form.first_name" required />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="last_name">Apellidos *</Label>
+                  <Input id="last_name" v-model="form.last_name" required />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div class="space-y-1.5">
+                  <Label>Fecha de nacimiento *</Label>
+                  <DatePicker v-model="birthdateValue" placeholder="Selecciona tu fecha" />
+                  <p v-if="computedAge != null" class="text-xs text-muted-foreground">
+                    Edad al inicio del concurso: <strong>{{ computedAge }}</strong> años
+                  </p>
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="dni">DNI / Documento</Label>
+                  <Input id="dni" v-model="form.dni" :class="dniError ? 'border-destructive' : ''" />
+                  <p v-if="dniError" class="text-xs text-destructive">{{ dniError }}</p>
+                </div>
+              </div>
+
+              <div class="space-y-4">
+                <div class="space-y-1.5">
+                  <Label>País</Label>
+                  <CountrySelect v-model="form.country" placeholder="Selecciona país…" />
+                </div>
+                <div class="space-y-1.5">
+                  <Label>Teléfono</Label>
+                  <PhoneInput v-model="form.phone" :default-dial="defaultDial" placeholder="600 11 22 33" />
+                </div>
+              </div>
+
+              <div class="space-y-1.5">
+                <Label for="email">Email de contacto</Label>
+                <Input id="email" v-model="form.email" type="email" />
+              </div>
+
+              <!-- Category -->
+              <div class="space-y-1.5">
+                <Label for="category">Categoría *</Label>
+                <Select v-model="form.category_id">
+                  <SelectTrigger id="category">
+                    <SelectValue placeholder="Selecciona una categoría…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <template v-if="eligibleCategories.length">
+                      <SelectItem
+                        v-for="c in eligibleCategories"
+                        :key="c.id"
+                        :value="c.id"
+                      >
+                        <div class="flex flex-col gap-0.5">
+                          <span class="font-medium">{{ c.name }}</span>
+                          <span class="text-xs text-muted-foreground">
+                            <template v-if="c.min_age != null || c.max_age != null">
+                              {{ c.min_age ?? '–' }}–{{ c.max_age ?? '–' }} años ·
+                            </template>
+                            <template v-if="c.max_participants != null">
+                              {{ c.current_count }}/{{ c.max_participants }} plazas
+                            </template>
+                            <template v-else>
+                              {{ c.current_count }} inscritos
+                            </template>
+                          </span>
+                        </div>
+                      </SelectItem>
+                    </template>
+                    <div v-else class="px-3 py-4 text-xs text-muted-foreground text-center">
+                      <template v-if="form.birthdate">
+                        No hay categorías disponibles para tu edad.
+                      </template>
+                      <template v-else>
+                        Introduce tu fecha de nacimiento para ver categorías.
+                      </template>
+                    </div>
+                  </SelectContent>
+                </Select>
+                <div v-if="form.birthdate && categories.length && !eligibleCategories.length" class="flex items-start gap-1.5 text-xs text-muted-foreground mt-1">
+                  <Users class="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    Ninguna categoría admite tu edad ({{ computedAge }} años) o todas están llenas.
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                class="w-full"
+                :disabled="submitting || !form.category_id"
+              >
+                <Loader2 v-if="submitting" class="w-4 h-4 mr-2 animate-spin" />
+                <Trophy v-else class="w-4 h-4 mr-2" />
+                {{ submitting
+                  ? (requiresPayment ? 'Redirigiendo al pago…' : 'Enviando…')
+                  : (requiresPayment ? 'Pagar e inscribirse' : 'Confirmar inscripción') }}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </Transition>
     </div>
   </div>
 </template>
+
+<style scoped>
+.hero-wrapper {
+  transition: max-width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              margin 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: 100%;
+}
+
+.hero-wrapper--narrow {
+  max-width: 28rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.phase-card {
+  transition: max-width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.25s ease;
+}
+
+.phase-card--narrow {
+  max-width: 28rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.phase-swap-enter-active,
+.phase-swap-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.phase-swap-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.phase-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+</style>
