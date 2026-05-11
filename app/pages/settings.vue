@@ -10,6 +10,11 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'vue-sonner'
 import { storeToRefs } from 'pinia'
+import { DatePicker } from '@/components/ui/date-picker'
+import { parseDate, type DateValue, getLocalTimeZone } from '@internationalized/date'
+import CountrySelect from '@/components/ui/country-select/CountrySelect.vue'
+import PhoneInput from '@/components/ui/phone-input/PhoneInput.vue'
+import { validateDni, detectIdKind } from '@/utils/dni'
 
 const authStore = useAuthStore()
 const { profile, organization, user, isOrgOwner, initials, displayName } = storeToRefs(authStore)
@@ -62,22 +67,67 @@ const lightboxOpen = ref(false)
 
 // ── Profile form ──────────────────────────────────────────────────────────────
 const profileForm = ref({
-  full_name: profile.value?.full_name ?? '',
+  full_name:  profile.value?.full_name ?? '',
   avatar_url: profile.value?.avatar_url ?? '',
+  first_name: (profile.value as any)?.first_name ?? '',
+  last_name:  (profile.value as any)?.last_name ?? '',
+  dni:        (profile.value as any)?.dni ?? '',
+  country:    (profile.value as any)?.country ?? '',
+  phone:      (profile.value as any)?.phone ?? '',
+  birthdate:  (profile.value as any)?.birthdate ?? '',
 })
 watch(profile, (p) => {
   if (p) {
-    profileForm.value.full_name = p.full_name ?? ''
+    profileForm.value.full_name  = p.full_name ?? ''
     profileForm.value.avatar_url = p.avatar_url ?? ''
+    profileForm.value.first_name = (p as any).first_name ?? ''
+    profileForm.value.last_name  = (p as any).last_name ?? ''
+    profileForm.value.dni        = (p as any).dni ?? ''
+    profileForm.value.country    = (p as any).country ?? ''
+    profileForm.value.phone      = (p as any).phone ?? ''
+    profileForm.value.birthdate  = (p as any).birthdate ?? ''
   }
 })
+
+// DNI/Pasaporte toggle + validation
+const idKind = ref<'dni' | 'passport'>(detectIdKind((profile.value as any)?.dni))
+watch(profile, (p) => { idKind.value = detectIdKind((p as any)?.dni) })
+const dniValidation = computed(() => {
+  if (!profileForm.value.dni) return { valid: true, type: null as any }
+  return validateDni(profileForm.value.dni, idKind.value)
+})
+const dniError = computed(() => (profileForm.value.dni && !dniValidation.value.valid) ? dniValidation.value.error : null)
+
+// Birthdate bridge ISO ↔ DateValue
+const birthdateValue = computed<DateValue | undefined>({
+  get() {
+    if (!profileForm.value.birthdate) return undefined
+    try { return parseDate(String(profileForm.value.birthdate).slice(0, 10)) } catch { return undefined }
+  },
+  set(val) {
+    if (!val) { profileForm.value.birthdate = ''; return }
+    const d = val.toDate(getLocalTimeZone())
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    profileForm.value.birthdate = `${y}-${m}-${day}`
+  },
+})
+
 const savingProfile = ref(false)
 async function saveProfile() {
+  if (dniError.value) { toast.error(dniError.value); return }
   savingProfile.value = true
   try {
     const { error } = await authStore.updateProfile({
-      full_name: profileForm.value.full_name,
-    })
+      full_name:  profileForm.value.full_name,
+      first_name: profileForm.value.first_name || null,
+      last_name:  profileForm.value.last_name  || null,
+      dni:        profileForm.value.dni        || null,
+      country:    profileForm.value.country    || null,
+      phone:      profileForm.value.phone      || null,
+      birthdate:  profileForm.value.birthdate  || null,
+    } as any)
     if (error) throw error
     toast.success('Perfil actualizado')
   } catch (e: any) {
@@ -141,6 +191,37 @@ async function savePassword() {
     toast.error(e?.message ?? 'Error al cambiar contraseña')
   } finally {
     savingPw.value = false
+  }
+}
+
+// ── Delete account ─────────────────────────────────────────────────────────────
+const deletingAccount = ref(false)
+const showDeleteConfirm = ref(false)
+const deleteConfirmText = ref('')
+
+const canDeleteAccount = computed(() => {
+  return deleteConfirmText.value === 'ELIMINAR' && !deletingAccount.value
+})
+
+async function handleDeleteAccount() {
+  if (!canDeleteAccount.value) return
+
+  deletingAccount.value = true
+  try {
+    await $fetch('/api/account', {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${authStore.session?.access_token ?? ''}` },
+    })
+    // User deleted server-side → token invalid. Local-only signOut (no /auth/v1/logout call).
+    await authStore.signOut({ scope: 'local' })
+    toast.success('Cuenta eliminada')
+    showDeleteConfirm.value = false
+    window.location.href = '/auth/login'
+  } catch (e: any) {
+    console.error('[delete] Error:', e)
+    toast.error(e?.data?.statusMessage || 'No se pudo eliminar la cuenta')
+  } finally {
+    deletingAccount.value = false
   }
 }
 
@@ -260,6 +341,59 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
             <Label class="text-xs font-bold uppercase tracking-widest text-zinc-500">Email</Label>
             <Input :value="user?.email" disabled class="h-9 text-sm bg-muted text-muted-foreground" />
             <p class="text-[10px] text-muted-foreground">El email no se puede cambiar desde aquí</p>
+          </div>
+
+          <!-- Datos personales -->
+          <div class="pt-2 border-t border-border/60 space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-xs font-bold uppercase tracking-widest text-zinc-500">Datos personales</p>
+              <span class="text-[10px] text-muted-foreground">Se rellenan en futuras inscripciones</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div class="space-y-1.5">
+                <Label class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Nombre</Label>
+                <Input v-model="profileForm.first_name" placeholder="Ana" class="h-9 text-sm" />
+              </div>
+              <div class="space-y-1.5">
+                <Label class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Apellidos</Label>
+                <Input v-model="profileForm.last_name" placeholder="García López" class="h-9 text-sm" />
+              </div>
+              <div class="space-y-1.5">
+                <Label class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Fecha de nacimiento</Label>
+                <DatePicker v-model="birthdateValue" placeholder="Selecciona fecha" class="h-9 text-sm" />
+              </div>
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <Label class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Documento</Label>
+                  <div class="inline-flex rounded-md border border-input overflow-hidden text-[9px] font-bold uppercase tracking-widest">
+                    <button type="button" class="px-2 py-0.5 transition-colors"
+                      :class="idKind === 'dni' ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'text-zinc-500 hover:bg-accent'"
+                      @click="idKind = 'dni'">DNI/NIE</button>
+                    <button type="button" class="px-2 py-0.5 transition-colors border-l border-input"
+                      :class="idKind === 'passport' ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'text-zinc-500 hover:bg-accent'"
+                      @click="idKind = 'passport'">Pasaporte</button>
+                  </div>
+                </div>
+                <Input
+                  v-model="profileForm.dni"
+                  :placeholder="idKind === 'dni' ? '12345678A' : 'AB1234567'"
+                  class="h-9 text-sm font-mono uppercase"
+                  :class="dniError ? 'border-red-400 focus-visible:ring-red-400' : ''"
+                />
+                <p v-if="dniError" class="text-[10px] text-red-600 dark:text-red-400">{{ dniError }}</p>
+                <p v-else-if="dniValidation.type" class="text-[10px] text-emerald-600 dark:text-emerald-400">
+                  ✓ {{ dniValidation.type.toUpperCase() }} válido
+                </p>
+              </div>
+              <div class="space-y-1.5">
+                <Label class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">País</Label>
+                <CountrySelect v-model="profileForm.country" placeholder="Selecciona país…" />
+              </div>
+              <div class="space-y-1.5">
+                <Label class="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Teléfono</Label>
+                <PhoneInput v-model="profileForm.phone" />
+              </div>
+            </div>
           </div>
 
           <!-- Account type badge -->
@@ -418,7 +552,7 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
           </div>
         </CardHeader>
         <Separator class="bg-red-100 dark:bg-red-900/30" />
-        <CardContent class="pt-6">
+        <CardContent class="pt-6 space-y-4">
           <div class="flex items-center justify-between">
             <div>
               <p class="text-sm font-bold text-zinc-800 dark:text-zinc-200">Eliminar cuenta</p>
@@ -426,12 +560,74 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
             </div>
             <Button
               variant="outline"
+              @click="showDeleteConfirm = true"
+              :disabled="deletingAccount"
               class="border-red-300 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 font-bold text-[10px] uppercase tracking-widest h-9 px-4"
-              disabled
             >
-              Eliminar cuenta
+              {{ deletingAccount ? 'Eliminando...' : 'Eliminar cuenta' }}
             </Button>
           </div>
+          
+          <!-- Delete Confirmation Modal -->
+          <Transition name="fade">
+            <div
+              v-if="showDeleteConfirm"
+              class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+              @click="showDeleteConfirm = false"
+            >
+              <div
+                class="bg-background rounded-2xl p-6 max-w-md mx-auto border border-border shadow-2xl"
+                @click.stop
+              >
+                <div class="flex items-center gap-3 mb-4">
+                  <div class="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg">
+                    <AlertTriangle class="w-5 h-5 text-red-600" />
+                  </div>
+                  <h3 class="text-lg font-bold text-red-600">¿Estás seguro?</h3>
+                </div>
+                
+                <p class="text-sm text-muted-foreground mb-4">
+                  Esta acción <strong>no se puede deshacer</strong>. Se eliminará:
+                </p>
+                <ul class="text-xs text-muted-foreground mb-4 space-y-1 list-disc list-inside">
+                  <li>Tu perfil de usuario</li>
+                  <li>Tu organización (si eres el dueño)</li>
+                  <li>Todos los concursos creados</li>
+                  <li>Todas las inscripciones</li>
+                </ul>
+                
+                <div class="space-y-2 mb-4">
+                  <Label class="text-xs font-bold uppercase tracking-widest text-zinc-500">
+                    Escribe <span class="text-red-600 font-mono">ELIMINAR</span> para confirmar
+                  </Label>
+                  <Input
+                    v-model="deleteConfirmText"
+                    placeholder="ELIMINAR"
+                    class="h-9 text-sm font-mono"
+                    @keydown.enter="handleDeleteAccount"
+                  />
+                </div>
+                
+                <div class="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    @click="showDeleteConfirm = false"
+                    :disabled="deletingAccount"
+                    class="h-9 px-4 text-xs"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    @click="handleDeleteAccount"
+                    :disabled="!canDeleteAccount"
+                    class="h-9 px-4 bg-red-600 hover:bg-red-700 text-white font-bold text-xs"
+                  >
+                    {{ deletingAccount ? 'Eliminando...' : 'Sí, eliminar cuenta' }}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Transition>
         </CardContent>
       </Card>
     </template>

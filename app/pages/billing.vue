@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Ticket, Zap, ShoppingCart, Check, Loader2, History, ArrowUpRight, ArrowDownRight, Link2, ExternalLink, CircleCheck, AlertCircle } from 'lucide-vue-next'
+import { Ticket, Zap, ShoppingCart, Check, Loader2, History, ArrowUpRight, ArrowDownRight, Link2, ExternalLink, CircleCheck, AlertCircle, Minus, Plus } from 'lucide-vue-next'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -50,13 +50,24 @@ const loading = ref(true)
 const buying = ref<string | null>(null)
 const connecting = ref(false)
 
+// Individual purchase state
+const ticketQty = ref(10)
+const activationQty = ref(1)
+const buyingTickets = ref(false)
+const buyingActivations = ref(false)
+
+const ACTIVATION_UNIT_EUR = 50
+const TICKET_UNIT_EUR = 1
+
 const token = computed(() => authStore.session?.access_token ?? '')
 
 async function fetchAll() {
   loading.value = true
   try {
     const [p, b, c] = await Promise.all([
-      $fetch<Plan[]>('/api/billing/plans'),
+      $fetch<Plan[]>('/api/billing/plans', {
+        headers: { Authorization: `Bearer ${token.value}` },
+      }),
       $fetch<BalanceResp>('/api/billing/balance', {
         headers: { Authorization: `Bearer ${token.value}` },
       }),
@@ -105,6 +116,38 @@ async function buy(plan: string) {
   }
 }
 
+async function buyTicketsTopup(qty: number) {
+  buyingTickets.value = true
+  try {
+    const res = await $fetch<{ url: string }>('/api/billing/checkout-tickets', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token.value}` },
+      body: { quantity: qty },
+    })
+    if (res?.url) window.location.href = res.url
+  } catch (e: any) {
+    toast.error(e?.data?.statusMessage || e?.message || 'Error al iniciar compra')
+  } finally {
+    buyingTickets.value = false
+  }
+}
+
+async function buyActivationsTopup(qty: number) {
+  buyingActivations.value = true
+  try {
+    const res = await $fetch<{ url: string }>('/api/billing/checkout-activations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token.value}` },
+      body: { quantity: qty },
+    })
+    if (res?.url) window.location.href = res.url
+  } catch (e: any) {
+    toast.error(e?.data?.statusMessage || e?.message || 'Error al iniciar compra')
+  } finally {
+    buyingActivations.value = false
+  }
+}
+
 async function pollBalanceUntilChange(prevTicket: number, prevActiv: number, maxMs = 20000) {
   const start = Date.now()
   while (Date.now() - start < maxMs) {
@@ -125,40 +168,18 @@ async function pollBalanceUntilChange(prevTicket: number, prevActiv: number, max
   }
 }
 
-onMounted(async () => {
-  const isSuccess = route.query.purchase === 'success'
-  const isCancel  = route.query.purchase === 'cancel'
-  const connectReturn = route.query.connect === 'return' || route.query.connect === 'refresh'
+const euro = (cents: number) => `${(cents / 100).toFixed(0)}€`
 
-  if (connectReturn) router.replace({ path: route.path, query: {} })
-
-  // Strip query so refresh doesn't re-trigger poll
-  if (isSuccess || isCancel) {
-    router.replace({ path: route.path, query: {} })
-  }
-  if (isCancel) toast.info('Compra cancelada')
-
-  await fetchAll()
-
-  if (isSuccess && balance.value) {
-    // Check if purchase already processed (recent purchase_bundle tx)
-    const lastPurchase = balance.value.transactions.find((x) => x.reason === 'purchase_bundle')
-    const alreadyProcessed = lastPurchase
-      && (Date.now() - new Date(lastPurchase.created_at).getTime()) < 60_000
-    if (alreadyProcessed) {
-      toast.success('Pago confirmado')
-    } else {
-      const t = balance.value.organization.ticket_balance
-      const a = balance.value.organization.activation_balance
-      toast.loading('Procesando pago...', { id: 'pay-poll', duration: 20000 })
-      await pollBalanceUntilChange(t, a)
-      toast.dismiss('pay-poll')
-    }
-  }
-})
-
-const euro = (cents: number) => `€${(cents / 100).toFixed(0)}`
-const pricePerTicket = (p: Plan) => (p.price_cents / 100 / p.tickets).toFixed(2)
+// Price breakdown: subtract activation value, show real ticket cost
+const planBreakdown = (p: Plan) => {
+  const totalEur = p.price_cents / 100
+  const activationPortion = p.activations * ACTIVATION_UNIT_EUR
+  const ticketPortion = totalEur - activationPortion
+  const perTicket = (ticketPortion / p.tickets).toFixed(2)
+  const unitValue = (p.tickets * TICKET_UNIT_EUR) + (p.activations * ACTIVATION_UNIT_EUR)
+  const savings = unitValue - totalEur
+  return { totalEur, activationPortion, ticketPortion, perTicket, unitValue, savings }
+}
 
 const PLAN_META: Record<string, { label: string; accent: string; highlight?: boolean }> = {
   starter: { label: 'Starter', accent: 'sky' },
@@ -168,6 +189,8 @@ const PLAN_META: Record<string, { label: string; accent: string; highlight?: boo
 
 const REASON_LABEL: Record<string, string> = {
   purchase_bundle: 'Compra de paquete',
+  purchase_tickets: 'Compra de tickets',
+  purchase_activations: 'Compra de activaciones',
   signup_bonus: 'Regalo de bienvenida',
   enrollment: 'Inscripción',
   csv_import: 'Importación CSV',
@@ -182,6 +205,44 @@ function formatDate(d: string) {
     hour: '2-digit', minute: '2-digit',
   })
 }
+
+onMounted(async () => {
+  const isSuccess = route.query.purchase === 'success'
+  const isCancel  = route.query.purchase === 'cancel'
+  const isTopupSuccess = route.query.topup === 'success'
+  const isTopupCancel  = route.query.topup === 'cancel'
+  const connectReturn = route.query.connect === 'return' || route.query.connect === 'refresh'
+
+  if (connectReturn) router.replace({ path: route.path, query: {} })
+
+  // Strip query so refresh doesn't re-trigger poll
+  if (isSuccess || isCancel || isTopupSuccess || isTopupCancel) {
+    router.replace({ path: route.path, query: {} })
+  }
+  if (isCancel) toast.info('Compra cancelada')
+  if (isTopupCancel) toast.info('Compra cancelada')
+
+  await fetchAll()
+
+  const showSuccess = isSuccess || isTopupSuccess
+  if (showSuccess && balance.value) {
+    // Check if purchase already processed
+    const lastPurchase = balance.value.transactions.find((x) =>
+      x.reason === 'purchase_bundle' || x.reason === 'purchase_tickets' || x.reason === 'purchase_activations'
+    )
+    const alreadyProcessed = lastPurchase
+      && (Date.now() - new Date(lastPurchase.created_at).getTime()) < 60_000
+    if (alreadyProcessed) {
+      toast.success('Pago confirmado')
+    } else {
+      const t = balance.value.organization.ticket_balance
+      const a = balance.value.organization.activation_balance
+      toast.loading('Procesando pago...', { id: 'pay-poll', duration: 20000 })
+      await pollBalanceUntilChange(t, a)
+      toast.dismiss('pay-poll')
+    }
+  }
+})
 </script>
 
 <template>
@@ -334,7 +395,9 @@ function formatDate(d: string) {
             </div>
             <CardHeader class="pb-3">
               <CardTitle class="text-lg capitalize">{{ PLAN_META[p.plan]?.label || p.plan }}</CardTitle>
-              <CardDescription class="text-xs">{{ pricePerTicket(p) }} €/ticket</CardDescription>
+              <CardDescription class="text-xs">
+                {{ p.tickets }} tickets + {{ p.activations }} activaciones
+              </CardDescription>
             </CardHeader>
             <Separator />
             <CardContent class="pt-5 space-y-4">
@@ -342,6 +405,25 @@ function formatDate(d: string) {
                 <p class="text-3xl font-bold">{{ euro(p.price_cents) }}</p>
                 <p class="text-[11px] text-muted-foreground">Pago único</p>
               </div>
+
+              <!-- Price breakdown -->
+              <div class="rounded-lg bg-muted/50 p-3 space-y-1.5 text-xs">
+                <p class="font-semibold text-[10px] uppercase tracking-widest text-muted-foreground">Desglose</p>
+                <div class="flex justify-between">
+                  <span>{{ p.tickets }} tickets</span>
+                  <span class="tabular-nums">{{ planBreakdown(p).perTicket }} €/ticket</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>{{ p.activations }} activaciones</span>
+                  <span class="tabular-nums">{{ ACTIVATION_UNIT_EUR }} €/ud</span>
+                </div>
+                <Separator class="my-1" />
+                <div class="flex justify-between font-semibold text-emerald-600 dark:text-emerald-400">
+                  <span>Ahorras</span>
+                  <span class="tabular-nums">{{ planBreakdown(p).savings.toFixed(0) }} €</span>
+                </div>
+              </div>
+
               <ul class="space-y-2 text-sm">
                 <li class="flex items-center gap-2">
                   <Check class="w-4 h-4 text-emerald-500 shrink-0" />
@@ -370,6 +452,128 @@ function formatDate(d: string) {
         </div>
       </div>
 
+      <!-- Individual purchases -->
+      <div>
+        <h3 class="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-3">Compra individual</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Tickets -->
+          <Card class="border-border shadow-sm">
+            <CardHeader class="pb-3">
+              <div class="flex items-center gap-3">
+                <div class="p-2 rounded-lg bg-sky-100 dark:bg-sky-950/40">
+                  <Ticket class="w-5 h-5 text-sky-600 dark:text-sky-400" />
+                </div>
+                <div>
+                  <CardTitle class="text-base">Tickets</CardTitle>
+                  <CardDescription class="text-xs">1 € por ticket · Máx. 500</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <Separator />
+            <CardContent class="pt-5 space-y-4">
+              <div class="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="h-9 w-9 shrink-0"
+                  :disabled="ticketQty <= 1"
+                  @click="ticketQty--"
+                >
+                  <Minus class="w-4 h-4" />
+                </Button>
+                <input
+                  v-model.number="ticketQty"
+                  type="number"
+                  min="1"
+                  max="500"
+                  class="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-center text-lg font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="h-9 w-9 shrink-0"
+                  :disabled="ticketQty >= 500"
+                  @click="ticketQty++"
+                >
+                  <Plus class="w-4 h-4" />
+                </Button>
+              </div>
+              <div class="flex items-center justify-between">
+                <p class="text-sm text-muted-foreground">Total:</p>
+                <p class="text-2xl font-bold tabular-nums">{{ ticketQty }} €</p>
+              </div>
+              <Button
+                class="w-full h-9 font-bold text-[10px] uppercase tracking-widest gap-2"
+                :disabled="buyingTickets"
+                @click="buyTicketsTopup(ticketQty)"
+              >
+                <Loader2 v-if="buyingTickets" class="w-3.5 h-3.5 animate-spin" />
+                <ShoppingCart v-else class="w-3.5 h-3.5" />
+                {{ buyingTickets ? 'Redirigiendo...' : 'Comprar tickets' }}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <!-- Activations -->
+          <Card class="border-border shadow-sm">
+            <CardHeader class="pb-3">
+              <div class="flex items-center gap-3">
+                <div class="p-2 rounded-lg bg-violet-100 dark:bg-violet-950/40">
+                  <Zap class="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                </div>
+                <div>
+                  <CardTitle class="text-base">Activaciones</CardTitle>
+                  <CardDescription class="text-xs">50 € por activación · Máx. 50</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <Separator />
+            <CardContent class="pt-5 space-y-4">
+              <div class="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="h-9 w-9 shrink-0"
+                  :disabled="activationQty <= 1"
+                  @click="activationQty--"
+                >
+                  <Minus class="w-4 h-4" />
+                </Button>
+                <input
+                  v-model.number="activationQty"
+                  type="number"
+                  min="1"
+                  max="50"
+                  class="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-center text-lg font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  class="h-9 w-9 shrink-0"
+                  :disabled="activationQty >= 50"
+                  @click="activationQty++"
+                >
+                  <Plus class="w-4 h-4" />
+                </Button>
+              </div>
+              <div class="flex items-center justify-between">
+                <p class="text-sm text-muted-foreground">Total:</p>
+                <p class="text-2xl font-bold tabular-nums">{{ activationQty * ACTIVATION_UNIT_EUR }} €</p>
+              </div>
+              <Button
+                class="w-full h-9 font-bold text-[10px] uppercase tracking-widest gap-2"
+                :disabled="buyingActivations"
+                @click="buyActivationsTopup(activationQty)"
+              >
+                <Loader2 v-if="buyingActivations" class="w-3.5 h-3.5 animate-spin" />
+                <ShoppingCart v-else class="w-3.5 h-3.5" />
+                {{ buyingActivations ? 'Redirigiendo...' : 'Comprar activaciones' }}
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
       <!-- History -->
       <Card class="border-border shadow-sm">
         <CardHeader class="pb-4">
@@ -388,7 +592,7 @@ function formatDate(d: string) {
           <div v-if="!balance.transactions.length" class="py-10 text-center text-sm text-muted-foreground">
             Sin movimientos
           </div>
-          <div v-else class="divide-y divide-border">
+          <div v-else class="divide-y divide-border max-h-[320px] overflow-y-auto">
             <div
               v-for="tx in balance.transactions"
               :key="tx.id"

@@ -240,31 +240,5 @@ async function handleDeleteJudge(id: string) {
         </Table>
       </CardContent>
     </Card>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-      <div class="p-6 rounded-2xl bg-gradient-to-br from-zinc-900 to-zinc-800 text-white shadow-lg overflow-hidden relative">
-        <div class="relative z-10 space-y-3">
-          <h3 class="text-xl font-bold flex items-center gap-2">
-            <Users class="w-5 h-5 text-zinc-400" />
-            ¿Cómo funciona el Pool?
-          </h3>
-          <p class="text-zinc-300 text-sm leading-relaxed">
-            El pool de jurados es un repositorio centralizado de jueces para tu organización.
-            Al añadir jueces aquí, podrás asignarlos rápidamente a cualquier concurso que crees.
-          </p>
-        </div>
-        <div class="absolute -right-8 -bottom-8 opacity-10">
-          <Users class="w-48 h-48" />
-        </div>
-      </div>
-
-      <div class="p-6 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-sm flex flex-col justify-center gap-3">
-        <h3 class="text-lg font-bold">Próximos Pasos: Automatización</h3>
-        <p class="text-muted-foreground text-sm leading-relaxed">
-          Estamos trabajando en una funcionalidad para que los jueces puedan postularse automáticamente
-          a tu pool mediante un enlace público.
-        </p>
-      </div>
-    </div>
   </div>
 </template>

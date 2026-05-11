@@ -96,6 +96,7 @@ async function submitScore() {
   isSubmittingScore.value = true
   try {
     const participantId = selectedSlot.value.participant_id ?? selectedSlot.value.participants?.id
+    console.log('[realtime/scores] SEND POST /api/scores (judge)', { round_id: round.value.id, participant_id: participantId, value: scoreForm.value.value })
     const res = await $fetch('/api/scores', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authStore.session.access_token}` },
