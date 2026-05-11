@@ -36,7 +36,7 @@ async function handleReset() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="max-w-md mx-auto space-y-6">
     <!-- Back button -->
     <NuxtLink
       to="/auth/login"

@@ -1,4 +1,4 @@
-import { h, resolveComponent } from 'vue'
+import { h } from 'vue'
 import type { ColumnDef } from '@tanstack/vue-table'
 import type { Participant } from '~~/types'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -49,9 +49,8 @@ export const createColumns = (onDelete: (id: string) => void): ColumnDef<Partici
         avatarUrl: (row.original as any).avatar_url ?? null,
       })
       if (!uid) return inner
-      const NuxtLink = resolveComponent('NuxtLink') as any
-      return h(NuxtLink, {
-        to: `/users/${uid}`,
+      return h('a', {
+        href: `/users/${uid}`,
         class: 'block hover:opacity-80 transition-opacity',
         onClick: (e: MouseEvent) => e.stopPropagation(),
       }, () => inner)

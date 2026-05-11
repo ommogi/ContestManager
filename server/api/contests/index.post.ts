@@ -35,9 +35,9 @@ export default defineEventHandler(async (event) => {
     organization_id: org.id,
     slug,
     description: short_description || null,
+    rules: rules || null,
     settings: {
       prizes: prizes || null,
-      rules: rules || null
     }
   }).select().single()
 

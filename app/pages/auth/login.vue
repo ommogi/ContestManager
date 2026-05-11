@@ -162,7 +162,7 @@ async function handleOAuth(provider: 'google' | 'facebook') {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="max-w-md mx-auto space-y-6">
     <!-- Logo + heading -->
     <div class="flex flex-col items-center gap-3">
       <img
