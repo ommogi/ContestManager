@@ -98,9 +98,6 @@ const getStatusColor = (status: string) => {
         {{ contest.status }}
       </Badge>
       <h3 class="text-xl font-bold leading-tight drop-shadow-md">{{ contest.name }}</h3>
-      <p class="line-clamp-2 text-sm text-white/80 drop-shadow h-10">
-        {{ contest.description || 'Sin descripción' }}
-      </p>
     </div>
 
     <CardContent class="relative z-10 py-3">

@@ -18,13 +18,22 @@
     "@sentry/nuxt": "^10.0.0",
     "@supabase/supabase-js": "^2.101.1",
     "@tanstack/vue-table": "^8.21.3",
+    "@tiptap/extension-link": "^3.23.1",
+    "@tiptap/extension-placeholder": "^3.23.1",
+    "@tiptap/extension-text-align": "^3.23.1",
+    "@tiptap/starter-kit": "^3.23.1",
+    "@tiptap/vue-3": "^3.23.1",
+    "@unovis/ts": "^1.6.5",
     "@vueuse/core": "^14.2.1",
+    "chart.js": "^3.9.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "embla-carousel-vue": "^8.6.0",
     "jspdf": "^4.2.1",
     "lucide-vue-next": "^1.0.0",
+    "marked": "^18.0.3",
     "nuxt": "^4.4.2",
+    "nuxt-charts": "^2.1.4",
     "ogl": "^1.0.11",
     "pinia": "^3.0.4",
     "reka-ui": "^2.9.5",
@@ -37,6 +46,7 @@
     "vaul-vue": "^0.4.1",
     "vue": "^3.5.31",
     "vue-router": "^5.0.4",
-    "vue-sonner": "^2.0.9"
+    "vue-sonner": "^2.0.9",
+    "zod": "^4.4.3"
   }
 }

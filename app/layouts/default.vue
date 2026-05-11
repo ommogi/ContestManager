@@ -42,7 +42,9 @@ function toggleColorMode() {
 
 async function handleSignOut() {
   await authStore.signOut()
-  router.push('/auth/login')
+  // Small delay to ensure auth state is fully cleared before navigation
+  await new Promise(resolve => setTimeout(resolve, 50))
+  await router.push('/auth/login')
 }
 
 // ── Ticket balance (org owners) ─────────────────────────────────────

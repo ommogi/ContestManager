@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Loader2, Upload, FileSpreadsheet, CircleAlert, CircleCheck, Ticket, ArrowRight, ArrowLeft, Trash2, ShoppingCart } from 'lucide-vue-next'
 
-const TICKET_PRICE_EUR = 3
+const TICKET_PRICE_EUR = 1
 import { toast } from 'vue-sonner'
 
 interface Category {

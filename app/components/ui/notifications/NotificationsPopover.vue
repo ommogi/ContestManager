@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { Bell } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useNotifications } from '@/composables/useNotifications'
 
-const { notifications, unreadCount, loading, init, markAsRead, markAllAsRead } = useNotifications()
+const { notifications, unreadCount, unreadNotifications, readNotifications, loading, init, markAsRead, markAllAsRead } = useNotifications()
+
+type Tab = 'all' | 'unread' | 'read'
+const activeTab = ref<Tab>('all')
 
 onMounted(() => init())
 
@@ -15,6 +18,18 @@ function onOpenChange(open: boolean) {
     markAllAsRead()
   }
 }
+
+const filteredNotifications = computed(() => {
+  if (activeTab.value === 'unread') return unreadNotifications.value
+  if (activeTab.value === 'read') return readNotifications.value
+  return notifications.value
+})
+
+const tabs: { key: Tab; label: string; badge?: number }[] = [
+  { key: 'all', label: 'Todas' },
+  { key: 'unread', label: 'Nuevas', badge: unreadCount.value },
+  { key: 'read', label: 'Vistas' },
+]
 
 function formatDate(iso: string) {
   const diff = Date.now() - new Date(iso).getTime()
@@ -79,6 +94,30 @@ function bodyParts(notification: any) {
         <div class="text-sm font-semibold">Notificaciones</div>
       </div>
 
+      <!-- Tabs -->
+      <div class="flex gap-1 px-2 pb-1 shrink-0">
+        <button
+          v-for="tab in tabs"
+          :key="tab.key"
+          @click="activeTab = tab.key"
+          :class="[
+            'flex-1 text-xs font-medium py-1.5 rounded-md transition-colors',
+            activeTab === tab.key
+              ? 'bg-accent text-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          ]"
+        >
+          {{ tab.label }}
+          <Badge
+            v-if="tab.badge"
+            variant="secondary"
+            class="ml-1 h-4 min-w-4 px-1 text-[10px] font-semibold"
+          >
+            {{ tab.badge }}
+          </Badge>
+        </button>
+      </div>
+
       <div role="separator" aria-orientation="horizontal" class="-mx-1 my-1 h-px bg-border shrink-0" />
 
       <div v-if="loading" class="px-3 py-6 text-center text-sm text-muted-foreground">
@@ -86,9 +125,9 @@ function bodyParts(notification: any) {
       </div>
 
       <div v-else class="flex-1 overflow-y-auto -mx-1 px-1">
-      <template v-if="notifications.length > 0">
+      <template v-if="filteredNotifications.length > 0">
         <div
-          v-for="notification in notifications"
+          v-for="notification in filteredNotifications"
           :key="notification.id"
           class="rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent cursor-pointer"
           @click="markAsRead(notification.id)"
@@ -120,7 +159,9 @@ function bodyParts(notification: any) {
       </template>
 
       <div v-else class="px-3 py-6 text-center text-sm text-muted-foreground">
-        No tienes notificaciones
+        <template v-if="activeTab === 'unread'">No tienes notificaciones nuevas</template>
+        <template v-else-if="activeTab === 'read'">No tienes notificaciones vistas</template>
+        <template v-else>No tienes notificaciones</template>
       </div>
       </div>
     </PopoverContent>

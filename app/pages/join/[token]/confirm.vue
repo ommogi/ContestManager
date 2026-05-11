@@ -62,7 +62,7 @@ onUnmounted(() => { if (timer) clearTimeout(timer) })
     <Card class="shadow-lg">
       <CardContent class="py-12 text-center space-y-5">
         <template v-if="state === 'waiting'">
-          <div class="w-16 h-16 mx-auto rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+          <div class="w-16 h-16 mx-auto rounded-full bg-zinc-800 flex items-center justify-center">
             <Loader2 class="w-7 h-7 animate-spin" />
           </div>
           <div class="space-y-1">
@@ -74,8 +74,8 @@ onUnmounted(() => { if (timer) clearTimeout(timer) })
         </template>
 
         <template v-else-if="state === 'ready'">
-          <div class="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center">
-            <CheckCircle2 class="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
+          <div class="w-16 h-16 mx-auto rounded-full bg-emerald-950/40 flex items-center justify-center">
+            <CheckCircle2 class="w-8 h-8 text-emerald-400" />
           </div>
           <div class="space-y-1">
             <p class="text-xl font-bold">¡Inscripción confirmada!</p>
@@ -93,8 +93,8 @@ onUnmounted(() => { if (timer) clearTimeout(timer) })
         </template>
 
         <template v-else-if="state === 'timeout'">
-          <div class="w-16 h-16 mx-auto rounded-full bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center">
-            <AlertTriangle class="w-7 h-7 text-amber-600 dark:text-amber-400" />
+          <div class="w-16 h-16 mx-auto rounded-full bg-amber-950/40 flex items-center justify-center">
+            <AlertTriangle class="w-7 h-7 text-amber-400" />
           </div>
           <div class="space-y-1">
             <p class="text-xl font-bold">El pago sigue procesándose</p>
@@ -106,8 +106,8 @@ onUnmounted(() => { if (timer) clearTimeout(timer) })
         </template>
 
         <template v-else>
-          <div class="w-16 h-16 mx-auto rounded-full bg-red-100 dark:bg-red-950/40 flex items-center justify-center">
-            <AlertTriangle class="w-7 h-7 text-red-600 dark:text-red-400" />
+          <div class="w-16 h-16 mx-auto rounded-full bg-red-950/40 flex items-center justify-center">
+            <AlertTriangle class="w-7 h-7 text-red-400" />
           </div>
           <div class="space-y-1">
             <p class="text-xl font-bold">No se pudo verificar</p>

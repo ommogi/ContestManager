@@ -89,9 +89,6 @@ function roleCount(myCategories: any[], role: string) {
             </Badge>
           </div>
           <h3 class="text-xl font-bold leading-tight drop-shadow-md">{{ entry.contest.name }}</h3>
-          <p class="line-clamp-2 text-sm text-white/80 drop-shadow h-10">
-            {{ entry.contest.description || 'Sin descripción' }}
-          </p>
         </div>
 
         <CardContent class="relative z-10 py-3">

@@ -1,18 +1,9 @@
 import { defineEventHandler, createError } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { org } = await requireOrgOwner(event)
   const admin = serverSupabaseAdmin()
-
-  const { data: org, error: orgErr } = await admin
-    .from('organizations')
-    .select('id, name, ticket_balance, activation_balance')
-    .eq('owner_id', user.id)
-    .maybeSingle()
-  if (orgErr) throw createError({ statusCode: 500, statusMessage: orgErr.message })
-  if (!org) throw createError({ statusCode: 404, statusMessage: 'organization_not_found' })
 
   const { data: tx, error: txErr } = await admin
     .from('billing_transactions')
@@ -22,5 +13,13 @@ export default defineEventHandler(async (event) => {
     .limit(100)
   if (txErr) throw createError({ statusCode: 500, statusMessage: txErr.message })
 
-  return { organization: org, transactions: tx ?? [] }
+  return {
+    organization: {
+      id: org.id,
+      name: org.name,
+      ticket_balance: org.ticket_balance,
+      activation_balance: org.activation_balance,
+    },
+    transactions: tx ?? []
+  }
 })

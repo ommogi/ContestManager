@@ -1,7 +1,8 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseClient } from '~~/server/utils/supabase'
+import { serverSupabaseClient, requireAuth } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
+  requireAuth(event)
   const client = serverSupabaseClient(event)
   const slug = getRouterParam(event, 'slug')
   const { data, error } = await client.from('organizations').select('*').eq('slug', slug).single()

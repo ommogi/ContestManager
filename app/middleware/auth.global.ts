@@ -11,7 +11,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   const authStore = useAuthStore()
 
-  const isPublic = PUBLIC_PATHS.some((p) => to.path.startsWith(p))
+  const isPublic = to.path === '/' || PUBLIC_PATHS.some((p) => to.path.startsWith(p))
   const isOnboarding = to.path.startsWith(ONBOARDING_PATH)
   const isOrgOnly = ORG_ONLY_PATHS.some((p) => to.path.startsWith(p))
 
@@ -23,17 +23,20 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   // ── Authenticated ──────────────────────────────────────────────────────
 
-  // Redirect away from auth pages (but allow /join for enrollments, and /auth/callback to resolve returnTo)
+  // Redirect away from auth pages (but allow /join for enrollments, /auth/callback to resolve returnTo,
+  // and /auth/login?from=onboarding for users who need to switch accounts)
+  const fromOnboarding = to.path === '/auth/login' && to.query.from === 'onboarding'
   if (isPublic
       && !to.path.startsWith('/join')
       && !to.path.startsWith('/c/')
-      && !to.path.startsWith('/auth/callback')) {
+      && !to.path.startsWith('/auth/callback')
+      && !fromOnboarding) {
     return navigateTo('/dashboard')
   }
 
   // Onboarding checks — preserve returnTo when coming from /join
   const needsOb = authStore.needsOnboarding || authStore.needsOrgSetup
-  if (needsOb && !isOnboarding) {
+  if (needsOb && !isOnboarding && !fromOnboarding) {
     const rt = to.path.startsWith('/join') ? to.fullPath : ''
     return navigateTo(rt ? `${ONBOARDING_PATH}?returnTo=${encodeURIComponent(rt)}` : ONBOARDING_PATH)
   }

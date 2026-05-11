@@ -1,10 +1,26 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { Eye, EyeOff, Loader2, Zap } from 'lucide-vue-next'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select'
+
+const passwordStrength = computed(() => {
+  if (!password.value) return { percent: 0, color: '', text: '' }
+  
+  let score = 0
+  if (password.value.length >= 8) score++
+  if (/[A-Z]/.test(password.value)) score++
+  if (/[a-z]/.test(password.value)) score++
+  if (/\d/.test(password.value)) score++
+  if (/[@$!%*?&]/.test(password.value)) score++
+  
+  if (score <= 2) return { percent: 25, color: 'bg-red-500', text: 'Débil' }
+  if (score <= 3) return { percent: 50, color: 'bg-yellow-500', text: 'Media' }
+  if (score <= 4) return { percent: 75, color: 'bg-blue-500', text: 'Buena' }
+  return { percent: 100, color: 'bg-green-500', text: 'Fuerte' }
+})
 
 definePageMeta({
   layout: 'auth',
@@ -25,15 +41,27 @@ const mode = ref<'login' | 'register'>(
 )
 const email = ref('')
 const password = ref('')
+const confirmPassword = ref('')
 const showPassword = ref(false)
+const showConfirmPassword = ref(false)
 const loading = ref(false)
-const oauthLoading = ref<'google' | 'github' | null>(null)
+const oauthLoading = ref<'google' | 'facebook' | null>(null)
+const passwordError = ref('')
+const acceptedTerms = ref(false)
+const marketingConsent = ref(false)
 
-const DEMO_USERS = [
+const isDev = import.meta.dev
+
+const DEMO_USERS = isDev ? [
   { label: 'Organización Demo', sublabel: 'Dueño · Conservatorio Demo', email: 'org@contestsaas.demo', password: 'Demo1234!' },
   { label: 'Ana García', sublabel: 'Participante · Piano Juvenil', email: 'participante@contestsaas.demo', password: 'Demo1234!' },
   { label: 'Carlos Jurado', sublabel: 'Jurado · Piano Juvenil', email: 'jurado@contestsaas.demo', password: 'Demo1234!' },
-]
+] : []
+
+// Clear password error when user starts typing
+watch([password, confirmPassword], () => {
+  if (passwordError.value) passwordError.value = ''
+})
 
 function selectDemoUser(val: string) {
   const found = DEMO_USERS.find(u => u.email === val)
@@ -59,15 +87,47 @@ async function handleLogin() {
 }
 
 async function handleRegister() {
-  if (password.value.length < 6) {
-    toast.error('La contraseña debe tener al menos 6 caracteres.')
+  passwordError.value = ''
+  
+  // Validate terms acceptance
+  if (!acceptedTerms.value) {
+    passwordError.value = 'Debes aceptar los términos y política de privacidad.'
+    toast.error(passwordError.value)
     return
   }
+  
+  // Validate password length (minimum 8 characters)
+  if (password.value.length < 8) {
+    passwordError.value = 'La contraseña debe tener al menos 8 caracteres.'
+    toast.error(passwordError.value)
+    return
+  }
+  
+  // Validate password complexity
+  const hasUppercase = /[A-Z]/.test(password.value)
+  const hasLowercase = /[a-z]/.test(password.value)
+  const hasNumber = /\d/.test(password.value)
+  const hasSymbol = /[@$!%*?&]/.test(password.value)
+  
+  if (!hasUppercase || !hasLowercase || !hasNumber || !hasSymbol) {
+    passwordError.value = 'La contraseña debe incluir mayúscula, minúscula, número y símbolo (@$!%*?&).'
+    toast.error(passwordError.value)
+    return
+  }
+  
+  // Validate passwords match
+  if (password.value !== confirmPassword.value) {
+    passwordError.value = 'Las contraseñas no coinciden.'
+    toast.error(passwordError.value)
+    return
+  }
+  
   loading.value = true
-  const { error, data } = await authStore.signUp(email.value.trim(), password.value)
+  const { error, data } = await authStore.signUp(email.value.trim(), password.value, marketingConsent.value)
   loading.value = false
 
   if (error) {
+    passwordError.value = error.message
     toast.error(
       error.message.includes('already registered')
         ? 'Este correo ya tiene una cuenta. Inicia sesión.'
@@ -90,7 +150,7 @@ function submit() {
   else handleRegister()
 }
 
-async function handleOAuth(provider: 'google' | 'github') {
+async function handleOAuth(provider: 'google' | 'facebook') {
   oauthLoading.value = provider
   const { error } = await authStore.signInWithOAuth(provider, returnTo.value)
   if (error) {
@@ -143,13 +203,13 @@ async function handleOAuth(provider: 'google' | 'github') {
         type="button"
         :disabled="oauthLoading !== null"
         class="group inline-flex items-center justify-center gap-2 h-11 rounded-lg bg-zinc-900/60 border border-white/10 hover:bg-zinc-800/80 hover:border-white/20 text-sm text-zinc-100 transition-colors backdrop-blur disabled:opacity-50"
-        @click="handleOAuth('github')"
+        @click="handleOAuth('facebook')"
       >
-        <Loader2 v-if="oauthLoading === 'github'" class="w-4 h-4 animate-spin" />
-        <svg v-else viewBox="0 0 24 24" class="w-4 h-4 fill-current">
-          <path d="M12 .5C5.73.5.75 5.48.75 11.75c0 4.96 3.22 9.16 7.69 10.65.56.1.77-.24.77-.54v-1.9c-3.13.68-3.79-1.51-3.79-1.51-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.62 1.22 3.26.93.1-.72.39-1.22.71-1.5-2.5-.29-5.13-1.25-5.13-5.55 0-1.23.44-2.23 1.16-3.02-.12-.29-.5-1.43.11-2.99 0 0 .94-.3 3.09 1.15a10.7 10.7 0 0 1 5.63 0c2.15-1.45 3.09-1.15 3.09-1.15.61 1.56.23 2.7.11 2.99.72.79 1.16 1.79 1.16 3.02 0 4.31-2.63 5.26-5.14 5.54.4.34.76 1.02.76 2.06v3.05c0 .3.2.65.78.54 4.46-1.49 7.68-5.69 7.68-10.65C23.25 5.48 18.27.5 12 .5z"/>
+        <Loader2 v-if="oauthLoading === 'facebook'" class="w-4 h-4 animate-spin" />
+        <svg v-else viewBox="0 0 24 24" class="w-4 h-4">
+          <path fill="#1877F2" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
         </svg>
-        Log in with GitHub
+        Log in with Facebook
       </button>
     </div>
 
@@ -178,9 +238,9 @@ async function handleOAuth(provider: 'google' | 'github') {
       <div class="space-y-1.5">
         <div class="flex items-center justify-between">
           <label for="password" class="text-sm text-zinc-300">Password</label>
-          <button v-if="mode === 'login'" type="button" class="text-xs text-zinc-400 hover:text-zinc-100 transition-colors">
+          <NuxtLink to="/auth/reset-password" class="text-xs text-zinc-400 hover:text-zinc-100 transition-colors">
             Forgot your password?
-          </button>
+          </NuxtLink>
         </div>
         <div class="relative">
           <input
@@ -191,6 +251,7 @@ async function handleOAuth(provider: 'google' | 'github') {
             :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
             placeholder="••••••••••••"
             class="w-full h-11 pl-3 pr-10 rounded-lg bg-zinc-900/60 border border-white/10 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/20 transition"
+            :class="passwordError && mode === 'register' ? 'border-red-500 focus:ring-red-500/20' : ''"
           />
           <button
             type="button"
@@ -201,12 +262,49 @@ async function handleOAuth(provider: 'google' | 'github') {
             <EyeOff v-else class="w-4 h-4" />
           </button>
         </div>
-        <p v-if="mode === 'register'" class="text-xs text-zinc-500">Mínimo 6 caracteres.</p>
+        <div v-if="mode === 'register' && password" class="space-y-2">
+          <div class="h-1 bg-zinc-700 rounded-full overflow-hidden">
+            <div :class="passwordStrength.color" :style="{ width: passwordStrength.percent + '%' }" class="h-full transition-all duration-300" />
+          </div>
+          <p class="text-xs" :class="passwordStrength.color">{{ passwordStrength.text }}</p>
+          <ul class="text-xs text-zinc-500 space-y-1">
+            <li :class="password.length >= 8 ? 'text-green-500' : ''">✓ 8+ caracteres</li>
+            <li :class="/[A-Z]/.test(password) ? 'text-green-500' : ''">✓ Mayúscula</li>
+            <li :class="/[a-z]/.test(password) ? 'text-green-500' : ''">✓ Minúscula</li>
+            <li :class="/\d/.test(password) ? 'text-green-500' : ''">✓ Número</li>
+            <li :class="/[@$!%*?&]/.test(password) ? 'text-green-500' : ''">✓ Símbolo</li>
+          </ul>
+        </div>
+      </div>
+
+      <div v-if="mode === 'register'" class="space-y-1.5">
+        <label for="confirmPassword" class="text-sm text-zinc-300">Confirm Password</label>
+        <div class="relative">
+          <input
+            id="confirmPassword"
+            v-model="confirmPassword"
+            :type="showConfirmPassword ? 'text' : 'password'"
+            required
+            autocomplete="new-password"
+            placeholder="••••••••••••"
+            class="w-full h-11 pl-3 pr-10 rounded-lg bg-zinc-900/60 border border-white/10 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/20 focus:border-white/20 transition"
+            :class="passwordError ? 'border-red-500 focus:ring-red-500/20' : ''"
+          />
+          <button
+            type="button"
+            class="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-200 transition-colors"
+            @click="showConfirmPassword = !showConfirmPassword"
+          >
+            <Eye v-if="!showConfirmPassword" class="w-4 h-4" />
+            <EyeOff v-else class="w-4 h-4" />
+          </button>
+        </div>
+        <p v-if="passwordError" class="text-xs text-red-400">{{ passwordError }}</p>
       </div>
 
       <button
         type="submit"
-        :disabled="loading || !email || !password"
+        :disabled="loading || !email || !password || (mode === 'register' && !confirmPassword)"
         class="w-full h-11 rounded-lg bg-zinc-100 text-zinc-900 font-semibold text-sm hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
       >
         <Loader2 v-if="loading" class="w-4 h-4 animate-spin" />
@@ -215,15 +313,26 @@ async function handleOAuth(provider: 'google' | 'github') {
           : (mode === 'login' ? 'Log In' : 'Crear cuenta') }}
       </button>
 
-      <p class="text-xs text-zinc-500 text-center">
+      <div v-if="mode === 'register'" class="space-y-3">
+        <label class="flex items-start gap-2 text-xs text-zinc-400 cursor-pointer">
+          <input type="checkbox" v-model="acceptedTerms" required class="mt-0.5 accent-zinc-100" />
+          <span>Acepto los <a href="/terms" class="underline hover:text-zinc-300">Términos de Servicio</a> y la <a href="/privacy" class="underline hover:text-zinc-300">Política de Privacidad</a></span>
+        </label>
+        
+        <label class="flex items-start gap-2 text-xs text-zinc-400 cursor-pointer">
+          <input type="checkbox" v-model="marketingConsent" class="mt-0.5 accent-zinc-100" />
+          <span>Acepto recibir correos sobre actualizaciones y novedades (opcional)</span>
+        </label>
+      </div>
+      <p v-else class="text-xs text-zinc-500 text-center">
         By signing in, you agree to our
-        <a href="#" class="underline hover:text-zinc-300">Terms</a> and
-        <a href="#" class="underline hover:text-zinc-300">Privacy Policy</a>.
+        <a href="/terms" class="underline hover:text-zinc-300">Terms</a> and
+        <a href="/privacy" class="underline hover:text-zinc-300">Privacy Policy</a>.
       </p>
     </form>
 
-    <!-- Demo quick-login -->
-    <div class="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-3 space-y-2">
+    <!-- Demo quick-login (dev only) -->
+    <div v-if="isDev && DEMO_USERS.length" class="rounded-xl border border-dashed border-white/10 bg-white/[0.02] p-3 space-y-2">
       <div class="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
         <Zap class="w-3.5 h-3.5 text-amber-400" />
         Acceso rápido — usuarios de demo

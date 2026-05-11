@@ -1,11 +1,7 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseClient, serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseClient, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
-
-  const client = serverSupabaseClient(event)
   const admin  = serverSupabaseAdmin()
   const id = getRouterParam(event, 'id')
 
@@ -21,6 +17,9 @@ export default defineEventHandler(async (event) => {
   if (partError || !participant) {
     throw createError({ statusCode: 404, statusMessage: 'Participant not found' })
   }
+
+  // Auth gate — require org owner or contest member
+  await requireOrgOwnerOrMember(event, participant.contest_id)
 
   const contestStatus = participant.contests?.status as string | undefined
   const orgId = participant.contests?.organization_id as string | undefined
@@ -63,8 +62,8 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  // 4. Delete participant (uses user-scoped client → respects RLS)
-  const { error: deleteError } = await client
+  // 4. Delete participant (uses admin client — auth gate already passed)
+  const { error: deleteError } = await admin
     .from('participants')
     .delete()
     .eq('id', id)

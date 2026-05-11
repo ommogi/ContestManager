@@ -26,7 +26,9 @@ const { displayName, initials, profile, isOrgOwner } = storeToRefs(authStore)
 
 const handleSignOut = async () => {
   await authStore.signOut()
-  router.push('/auth/login')
+  // Small delay to ensure auth state is fully cleared before navigation
+  await new Promise(resolve => setTimeout(resolve, 50))
+  await router.push('/auth/login')
 }
 
 const goToSettings = () => {
@@ -39,7 +41,7 @@ const goToSettings = () => {
     <DropdownMenuTrigger as-child>
       <SidebarMenuButton
         size="lg"
-        class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground shadow-sm border border-border/50 bg-card transition-all"
+        class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground shadow-sm border border-border/50 bg-card transition-all group-data-[collapsible=icon]:justify-center"
       >
         <Avatar class="h-8 w-8 rounded-lg">
           <AvatarImage :src="profile?.avatar_url || ''" :alt="displayName" />

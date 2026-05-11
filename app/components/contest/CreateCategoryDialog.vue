@@ -24,7 +24,6 @@ const isSubmitting = ref(false)
 const form = ref({
   name: '',
   description: '',
-  tier: '',
   min_age: '' as string | number,
   max_age: '' as string | number,
   max_participants: '' as string | number,
@@ -44,14 +43,13 @@ const handleCreate = async () => {
     }
     await store.createCategory(form.value.name, {
       description: form.value.description,
-      tier: form.value.tier,
       min_age: toInt(form.value.min_age) as any,
       max_age: toInt(form.value.max_age) as any,
       max_participants: toInt(form.value.max_participants) as any,
     })
 
     toast.success('Categoría creada correctamente')
-    form.value = { name: '', description: '', tier: '', min_age: '', max_age: '', max_participants: '' }
+    form.value = { name: '', description: '', min_age: '', max_age: '', max_participants: '' }
     isOpen.value = false
   } catch (error) {
     toast.error('Error al crear la categoría')
@@ -87,14 +85,6 @@ const handleCreate = async () => {
             id="name"
             v-model="form.name"
             placeholder="Ej. Solistas Junior"
-          />
-        </div>
-        <div class="grid gap-2">
-          <Label for="tier">Nivel / Rango (Opcional)</Label>
-          <Input
-            id="tier"
-            v-model="form.tier"
-            placeholder="Ej. Profesional, Amateur..."
           />
         </div>
         <div class="grid grid-cols-3 gap-2">

@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseUser } from '~~/server/utils/supabase'
+import { serverSupabaseUser, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 
 interface Row {
   category_id: string
@@ -13,11 +13,11 @@ interface Row {
 }
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
-
   const contestId = getRouterParam(event, 'id')
   if (!contestId) throw createError({ statusCode: 400, statusMessage: 'Missing contest id' })
+
+  // Auth gate — require org owner or contest member
+  await requireOrgOwnerOrMember(event, contestId)
 
   const body = await readBody<{ rows: Row[] }>(event)
   const rows = body?.rows ?? []

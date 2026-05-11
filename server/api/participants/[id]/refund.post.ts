@@ -1,10 +1,9 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { org } = await requireOrgOwner(event)
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing participant id' })
@@ -33,13 +32,9 @@ export default defineEventHandler(async (event) => {
     .single()
   if (cErr || !contest) throw createError({ statusCode: 404, statusMessage: 'contest_not_found' })
 
-  const { data: org, error: oErr } = await admin
-    .from('organizations')
-    .select('owner_id')
-    .eq('id', contest.organization_id)
-    .single()
-  if (oErr || !org) throw createError({ statusCode: 404, statusMessage: 'org_not_found' })
-  if (org.owner_id !== user.id) throw createError({ statusCode: 403, statusMessage: 'forbidden' })
+  if (contest.organization_id !== org.id) {
+    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
+  }
 
   // Compute refund amount (default: full remaining)
   const paid = participant.amount_paid_cents ?? 0

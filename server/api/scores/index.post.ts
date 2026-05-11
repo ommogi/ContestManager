@@ -1,7 +1,8 @@
 import { defineEventHandler, createError, readBody } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
+  const user = requireAuth(event)
   const client = serverSupabaseAdmin()
   const body = await readBody(event)
 
@@ -15,7 +16,49 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'value is required and must be a number' })
   }
 
+  // Auth gate: judge_id must match the authenticated user's id
+  // (admins may submit on behalf of a judge via admin_user_id)
   const isAdminAction = !!admin_user_id
+  if (!isAdminAction && judge_id !== user.id) {
+    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
+  }
+
+  // If admin action, require org owner of the contest
+  if (isAdminAction) {
+    const { data: round } = await client
+      .from('rounds')
+      .select('category_id')
+      .eq('id', round_id)
+      .maybeSingle()
+    if (!round) {
+      throw createError({ statusCode: 404, statusMessage: 'round_not_found' })
+    }
+    const { data: category } = await client
+      .from('categories')
+      .select('contest_id')
+      .eq('id', round.category_id)
+      .maybeSingle()
+    if (!category) {
+      throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
+    }
+    const { data: contest } = await client
+      .from('contests')
+      .select('organization_id')
+      .eq('id', category.contest_id)
+      .maybeSingle()
+    if (!contest) {
+      throw createError({ statusCode: 404, statusMessage: 'contest_not_found' })
+    }
+    const { data: org } = await client
+      .from('organizations')
+      .select('id')
+      .eq('id', contest.organization_id)
+      .eq('owner_id', user.id)
+      .maybeSingle()
+    if (!org) {
+      throw createError({ statusCode: 403, statusMessage: 'forbidden' })
+    }
+  }
 
   // Read existing score for audit
   const { data: existing } = await client

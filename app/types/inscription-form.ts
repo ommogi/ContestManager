@@ -1,0 +1,1 @@
+../../types/inscription-form.ts

@@ -1,10 +1,8 @@
 import { defineEventHandler, createError } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
-
+  const user = requireAuth(event)
   const client = serverSupabaseAdmin()
 
   // Participant entries (with category info)

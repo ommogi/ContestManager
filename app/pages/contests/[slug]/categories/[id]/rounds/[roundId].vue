@@ -53,7 +53,7 @@ onMounted(async () => {
 // Real-time sync
 const roundIdRef = computed(() => roundId)
 useRoundScoresRealtime(roundIdRef, (id) => {
-  contestStore.fetchRoundSummary(id)
+  contestStore.fetchRoundSummary(id, true)
 })
 
 const categoryJudges = computed(() => members.value.filter((m: any) => m.role === 'judge') as any[])
@@ -83,6 +83,25 @@ const filteredCategoryJudges = computed(() => {
     (j.profile?.full_name || j.full_name || j.email || '').toLowerCase().includes(q)
   )
 })
+
+function judgeAverage(userId: string): string {
+  const summaries = currentRoundSummary.value?.participant_summaries || []
+  const vals: number[] = []
+  for (const s of summaries) {
+    const det = (s.judge_details || []).find((d: any) => d.judge_id === userId)
+    if (det && det.value != null) {
+      const n = Number(det.value)
+      if (!Number.isNaN(n)) vals.push(n)
+    }
+  }
+  if (!vals.length) return '—'
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length
+  return avg.toFixed(2)
+}
+function judgeScoredCount(userId: string): number {
+  const summaries = currentRoundSummary.value?.participant_summaries || []
+  return summaries.filter((s: any) => (s.judge_details || []).some((d: any) => d.judge_id === userId)).length
+}
 
 const filteredMatrixSummaries = computed(() => {
   const q = matrixFilter.value.toLowerCase().trim()
@@ -151,6 +170,7 @@ const saveEditedScore = async (judgeId: string) => {
   if (!selectedParticipantId.value) return
   isSavingScore.value = true
   try {
+    console.log('[realtime/scores] SEND POST /api/scores')
     await $fetch('/api/scores' as any, {
       method: 'POST',
       body: {
@@ -230,6 +250,7 @@ const saveJudgeScore = async (participantId: string) => {
   if (!selectedJudgeUserId.value) return
   isSavingJudgeScore.value = true
   try {
+    console.log('[realtime/scores] SEND POST /api/scores')
     await $fetch('/api/scores' as any, {
       method: 'POST',
       body: {
@@ -274,6 +295,7 @@ const saveAdminScore = async () => {
   if (!adminScoreDraft.value || !adminUserId.value) return
   isSavingAdminScore.value = true
   try {
+    console.log('[realtime/scores] SEND POST /api/scores')
     await $fetch('/api/scores' as any, {
       method: 'POST',
       body: {
@@ -1109,6 +1131,10 @@ const generatePdf = async () => {
 
 // ── Start round ───────────────────────────────────────────────────────────────
 const handleStartRound = async () => {
+  if (currentContest.value?.status !== 'active') {
+    toast.error('El concurso debe estar activo para iniciar la ronda')
+    return
+  }
   await contestStore.startRound(roundId)
   toast.success('Ronda iniciada')
 }
@@ -1182,6 +1208,8 @@ function statusLabel(status: string) {
         <Button
           v-if="currentRound?.status === 'pending'"
           class="h-9 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold uppercase text-[9px] tracking-widest gap-2 hover:bg-zinc-700 dark:hover:bg-zinc-300"
+          :disabled="currentContest.value?.status !== 'active'"
+          :title="currentContest.value?.status !== 'active' ? 'El concurso debe estar activo' : ''"
           @click="handleStartRound"
         >
           <Play class="w-3.5 h-3.5 fill-current" /> Iniciar Ronda
@@ -1456,9 +1484,12 @@ function statusLabel(status: string) {
                   <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest mt-0.5">Jurado Certificado</span>
                 </div>
               </div>
-              <div class="flex flex-col items-end">
+              <div class="flex flex-col items-end gap-0.5">
                 <span class="text-xs font-black text-zinc-900 dark:text-zinc-100">
-                  {{ currentRoundSummary?.participant_summaries.filter((s:any) => s.judge_details?.some((d:any) => d.judge_id === j.user_id)).length || 0 }} / {{ currentRoundParticipants.length }}
+                  {{ judgeScoredCount(j.user_id) }} / {{ currentRoundParticipants.length }}
+                </span>
+                <span class="text-[9px] font-bold uppercase tracking-widest text-zinc-400">
+                  Media: <span class="text-zinc-700 dark:text-zinc-300 tabular-nums">{{ judgeAverage(j.user_id) }}</span>
                 </span>
               </div>
             </div>

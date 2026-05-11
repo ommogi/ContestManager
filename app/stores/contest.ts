@@ -82,6 +82,11 @@ export const useContestStore = defineStore('contest', () => {
     return categoriesStore.update(id, payload)
   }
 
+  async function deleteCategory(id: string) {
+    await categoriesStore.remove(id)
+    categoriesStore.invalidate(contestsStore.current?.id)
+  }
+
   async function addParticipant(payload: Partial<Participant>) {
     const contestId = contestsStore.current?.id
     if (!contestId) return
@@ -201,6 +206,7 @@ export const useContestStore = defineStore('contest', () => {
     deleteContest,
     createCategory,
     updateCategory,
+    deleteCategory,
     addParticipant,
     updateParticipant,
     deleteParticipant,

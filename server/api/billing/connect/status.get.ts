@@ -1,19 +1,11 @@
 import { defineEventHandler, createError } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { org } = await requireOrgOwner(event)
 
   const admin = serverSupabaseAdmin()
-  const { data: org, error: orgErr } = await admin
-    .from('organizations')
-    .select('id, stripe_account_id, stripe_onboarding_done, stripe_charges_enabled, stripe_payouts_enabled')
-    .eq('owner_id', user.id)
-    .maybeSingle()
-  if (orgErr) throw createError({ statusCode: 500, statusMessage: orgErr.message })
-  if (!org) throw createError({ statusCode: 404, statusMessage: 'organization_not_found' })
 
   if (!org.stripe_account_id) {
     return {

@@ -1,5 +1,5 @@
 import { defineEventHandler, readBody, createError } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 
 const PLAN_NAMES: Record<string, string> = {
@@ -9,8 +9,7 @@ const PLAN_NAMES: Record<string, string> = {
 }
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { user, org } = await requireOrgOwner(event)
 
   const { plan } = (await readBody(event)) || {}
   if (!plan || !PLAN_NAMES[plan]) {
@@ -18,14 +17,6 @@ export default defineEventHandler(async (event) => {
   }
 
   const admin = serverSupabaseAdmin()
-
-  const { data: org, error: orgErr } = await admin
-    .from('organizations')
-    .select('id, name')
-    .eq('owner_id', user.id)
-    .maybeSingle()
-  if (orgErr) throw createError({ statusCode: 500, statusMessage: orgErr.message })
-  if (!org) throw createError({ statusCode: 404, statusMessage: 'organization_not_found' })
 
   const { data: bundles, error: bErr } = await admin.rpc('get_plan_bundles')
   if (bErr) throw createError({ statusCode: 500, statusMessage: bErr.message })

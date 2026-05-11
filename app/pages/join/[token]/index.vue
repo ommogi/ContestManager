@@ -1,14 +1,23 @@
 <script setup lang="ts">
 import { toast } from 'vue-sonner'
-import { Loader2, Trophy, Calendar, Users, Lock, CheckCircle2, ArrowRight } from 'lucide-vue-next'
+import { computed, ref, reactive, watchEffect, watch } from 'vue'
+import { marked } from 'marked'
+import { Loader2, Trophy, Calendar, Users, Lock, CheckCircle2, ArrowRight, ArrowLeft, FileText } from 'lucide-vue-next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { DatePicker } from '@/components/ui/date-picker'
+import { PhoneInput } from '@/components/ui/phone-input'
+import { CountrySelect } from '@/components/ui/country-select'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select'
+import { parseDate, getLocalTimeZone, type DateValue } from '@internationalized/date'
+import { DIAL_CODES, findCountryByName } from '@/utils/countries'
 
 definePageMeta({
   layout: 'auth',
@@ -24,7 +33,8 @@ const { data, pending, error: fetchError } = await useFetch<{
     id: string; slug: string; name: string; description: string | null;
     cover_image_url: string | null; type: string; status: string;
     starts_at: string | null; ends_at: string | null; registration_open: boolean;
-    entry_fee_cents: number; org_charges_enabled: boolean
+    entry_fee_cents: number; org_charges_enabled: boolean;
+    settings: Record<string, unknown> | null
   },
   categories: Array<{
     id: string; name: string; description: string | null; status: string;
@@ -37,6 +47,15 @@ const { data, pending, error: fetchError } = await useFetch<{
 
 const contest = computed(() => data.value?.contest)
 const categories = computed(() => data.value?.categories ?? [])
+const hasRules = computed(() => !!(contest.value?.settings as any)?.rules)
+
+// ── Phase: info → enrollment ────────────────────────────────────────────
+const phase = ref<'info' | 'enrollment'>('info')
+const accepted = ref(false)
+const activeTab = ref<'description' | 'reglamento'>('description')
+
+const parsedDescription = computed(() => marked.parse(contest.value?.description || '') as string)
+const parsedRules = computed(() => marked.parse((contest.value?.settings as any)?.rules || '') as string)
 
 // ── Auth gate ────────────────────────────────────────────────────────────
 const isAuthed = computed(() => authStore.isAuthenticated)
@@ -56,14 +75,50 @@ const form = reactive({
   email: '',
 })
 
-// Prefill email from session
+const birthdateValue = computed<DateValue | undefined>({
+  get() {
+    if (!form.birthdate) return undefined
+    try { return parseDate(form.birthdate.slice(0, 10)) } catch { return undefined }
+  },
+  set(val) {
+    if (!val) { form.birthdate = ''; return }
+    const d = val.toDate(getLocalTimeZone())
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    form.birthdate = `${y}-${m}-${day}`
+  },
+})
+
+const defaultDial = computed(() => {
+  const c = form.country.trim()
+  if (!c) return '34'
+  const country = findCountryByName(c)
+  if (country?.code) return DIAL_CODES[country.code] ?? '34'
+  return DIAL_CODES[c] ?? '34'
+})
+
+// Prefill from session & profile (once, then stop reacting)
+const prefilled = ref(false)
 watchEffect(() => {
+  if (prefilled.value) return
+  const p = authStore.profile
+  if (!p) return
   if (authStore.user?.email && !form.email) form.email = authStore.user.email
   const fn = (authStore.profile as any)?.full_name as string | undefined
   if (fn && !form.first_name && !form.last_name) {
     const parts = fn.split(' ')
     form.first_name = parts.shift() || ''
     form.last_name = parts.join(' ')
+  }
+  if (p.first_name && !form.first_name) form.first_name = p.first_name
+  if (p.last_name && !form.last_name) form.last_name = p.last_name
+  if (p.dni && !form.dni) form.dni = p.dni
+  if (p.country && !form.country) form.country = p.country
+  if (p.phone && !form.phone) form.phone = p.phone
+  if (p.birthdate && !form.birthdate) form.birthdate = p.birthdate
+  if (p.first_name || p.last_name || p.dni || p.country || p.phone || p.birthdate) {
+    prefilled.value = true
   }
 })
 
@@ -185,8 +240,8 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
     <!-- Success -->
     <Card v-else-if="success" class="shadow-lg">
       <CardContent class="py-12 text-center space-y-4">
-        <div class="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center">
-          <CheckCircle2 class="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
+        <div class="w-16 h-16 mx-auto rounded-full bg-emerald-950/40 flex items-center justify-center">
+          <CheckCircle2 class="w-8 h-8 text-emerald-400" />
         </div>
         <div class="space-y-1">
           <p class="text-xl font-bold">¡Inscripción completada!</p>
@@ -214,9 +269,6 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
           <div class="flex items-start justify-between gap-3">
             <div class="flex-1 min-w-0">
               <CardTitle class="text-xl">{{ contest.name }}</CardTitle>
-              <CardDescription v-if="contest.description" class="mt-1 line-clamp-2">
-                {{ contest.description }}
-              </CardDescription>
             </div>
             <Badge variant="outline" class="shrink-0">Inscripción</Badge>
           </div>
@@ -233,6 +285,82 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
           <Lock class="w-6 h-6 mx-auto text-destructive" />
           <p class="font-semibold">Inscripciones cerradas</p>
           <p class="text-sm text-muted-foreground">El organizador ha cerrado el registro.</p>
+        </CardContent>
+      </Card>
+
+      <!-- ── PHASE: Info (Description + Rules + Acceptance) ─────────────── -->
+      <Card v-else-if="phase === 'info'" class="shadow-lg">
+        <CardHeader>
+          <CardTitle class="text-base">Información del concurso</CardTitle>
+          <CardDescription>
+            Lee la descripción y el reglamento antes de inscribirte
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-5">
+          <Tabs v-model="activeTab">
+            <TabsList class="w-full">
+              <TabsTrigger value="description" class="flex-1">Descripción</TabsTrigger>
+              <TabsTrigger value="reglamento" class="flex-1">Reglamento</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="description" class="mt-4">
+              <div
+                v-if="contest.description"
+                class="rich-content text-sm prose prose-sm max-w-none"
+                v-html="parsedDescription"
+              />
+              <p v-else class="text-sm text-muted-foreground py-4 text-center">
+                El organizador no ha añadido una descripción.
+              </p>
+            </TabsContent>
+
+            <TabsContent value="reglamento" class="mt-4">
+              <div
+                v-if="(contest.settings as any)?.rules"
+                class="rich-content text-sm prose prose-sm max-w-none"
+                v-html="parsedRules"
+              />
+              <div v-else class="flex flex-col items-center gap-2 py-6 text-center">
+                <FileText class="w-8 h-8 text-muted-foreground/40" />
+                <p class="text-sm text-muted-foreground">
+                  El organizador no ha publicado el reglamento.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <!-- Entry fee -->
+          <div v-if="requiresPayment" class="rounded-lg border border-border bg-muted/40 p-3 flex items-center justify-between">
+            <div>
+              <p class="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cuota de inscripción</p>
+              <p class="text-xs text-muted-foreground">Pago seguro vía Stripe</p>
+            </div>
+            <p class="text-xl font-bold">€{{ ((contest.entry_fee_cents || 0) / 100).toFixed(2) }}</p>
+          </div>
+
+          <!-- Acceptance checkbox -->
+          <div class="flex items-start gap-3 pt-2">
+            <Checkbox
+              id="accept-terms"
+              v-model="accepted"
+              class="mt-0.5"
+            />
+            <label
+              for="accept-terms"
+              class="text-sm leading-snug cursor-pointer select-none"
+            >
+              He leído y acepto las bases y condiciones
+            </label>
+          </div>
+
+          <Button
+            class="w-full"
+            :disabled="!accepted"
+            @click="phase = 'enrollment'"
+          >
+            Continuar inscripción
+            <ArrowRight class="w-4 h-4 ml-2" />
+          </Button>
         </CardContent>
       </Card>
 
@@ -256,10 +384,22 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
       <!-- Form -->
       <Card v-else class="shadow-lg">
         <CardHeader>
-          <CardTitle class="text-base">Datos de inscripción</CardTitle>
-          <CardDescription>
-            Completa tus datos. La categoría se filtrará por edad al indicar tu fecha de nacimiento.
-          </CardDescription>
+          <div class="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="-ml-2 h-8 w-8"
+              @click="phase = 'info'"
+            >
+              <ArrowLeft class="w-4 h-4" />
+            </Button>
+            <div>
+              <CardTitle class="text-base">Datos de inscripción</CardTitle>
+              <CardDescription>
+                Completa tus datos. La categoría se filtrará por edad al indicar tu fecha de nacimiento.
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <form @submit.prevent="submit" class="space-y-4">
@@ -276,8 +416,8 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
 
             <div class="grid grid-cols-2 gap-3">
               <div class="space-y-1.5">
-                <Label for="birthdate">Fecha de nacimiento *</Label>
-                <Input id="birthdate" v-model="form.birthdate" type="date" required />
+                <Label>Fecha de nacimiento *</Label>
+                <DatePicker v-model="birthdateValue" placeholder="Selecciona tu fecha" />
                 <p v-if="computedAge != null" class="text-xs text-muted-foreground">
                   Edad al inicio del concurso: <strong>{{ computedAge }}</strong> años
                 </p>
@@ -288,14 +428,14 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-3">
+            <div class="space-y-4">
               <div class="space-y-1.5">
-                <Label for="country">País</Label>
-                <Input id="country" v-model="form.country" />
+                <Label>País</Label>
+                <CountrySelect v-model="form.country" placeholder="Selecciona país…" />
               </div>
               <div class="space-y-1.5">
-                <Label for="phone">Teléfono</Label>
-                <Input id="phone" v-model="form.phone" type="tel" />
+                <Label>Teléfono</Label>
+                <PhoneInput v-model="form.phone" :default-dial="defaultDial" placeholder="600 11 22 33" />
               </div>
             </div>
 
@@ -350,14 +490,6 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
                   Ninguna categoría admite tu edad ({{ computedAge }} años) o todas están llenas.
                 </span>
               </div>
-            </div>
-
-            <div v-if="requiresPayment" class="rounded-lg border border-border bg-muted/40 p-3 flex items-center justify-between">
-              <div>
-                <p class="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cuota de inscripción</p>
-                <p class="text-xs text-muted-foreground">Pago seguro vía Stripe</p>
-              </div>
-              <p class="text-xl font-bold">€{{ ((contest.entry_fee_cents || 0) / 100).toFixed(2) }}</p>
             </div>
 
             <Button

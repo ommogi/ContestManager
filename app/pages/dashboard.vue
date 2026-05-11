@@ -7,9 +7,22 @@ import { storeToRefs } from 'pinia'
 const authStore = useAuthStore()
 const { isOrgOwner, displayName } = storeToRefs(authStore)
 
-// Org owner: fetch all their contests
+// Org owner: fetch all their contests + stats
 const { data: contests } = isOrgOwner.value
-  ? await useFetch('/api/contests')
+  ? await useFetch('/api/contests', {
+      headers: computed(() => ({
+        Authorization: `Bearer ${authStore.session?.access_token ?? ''}`
+      }))
+    })
+  : { data: ref(null) }
+
+const { data: orgStats } = isOrgOwner.value
+  ? await useFetch('/api/stats/organization', {
+      server: false,
+      headers: computed(() => ({
+        Authorization: `Bearer ${authStore.session?.access_token ?? ''}`
+      }))
+    })
   : { data: ref(null) }
 
 // Regular user: fetch their participation data
@@ -24,6 +37,17 @@ const { data: myContests } = !isOrgOwner.value
 
 const participantCount = computed(() => (myContests.value as any)?.asParticipant?.length ?? 0)
 const judgeCount = computed(() => (myContests.value as any)?.asJudge?.length ?? 0)
+
+// Real stats from orgStats
+const totalParticipants = computed(() => (orgStats.value as any)?.participants?.total ?? 0)
+const totalScores = computed(() => {
+  const scores = (orgStats.value as any)?.scores?.total
+  return scores != null ? scores : 0
+})
+const avgScore = computed(() => {
+  const avg = (orgStats.value as any)?.scores?.average
+  return avg != null ? Number(avg).toFixed(1) : '0.0'
+})
 </script>
 
 <template>
@@ -55,7 +79,7 @@ const judgeCount = computed(() => (myContests.value as any)?.asJudge?.length ?? 
             <Users class="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div class="text-3xl font-bold">142</div>
+            <div class="text-3xl font-bold">{{ totalParticipants }}</div>
             <p class="text-xs text-muted-foreground">En todas las categorías</p>
           </CardContent>
         </Card>
@@ -65,8 +89,8 @@ const judgeCount = computed(() => (myContests.value as any)?.asJudge?.length ?? 
             <Activity class="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
-            <div class="text-3xl font-bold">1,893</div>
-            <p class="text-xs text-muted-foreground">Registradas esta semana</p>
+            <div class="text-3xl font-bold">{{ totalScores }}</div>
+            <p class="text-xs text-muted-foreground">Registradas en total</p>
           </CardContent>
         </Card>
         <Card class="shadow-sm">
@@ -75,7 +99,7 @@ const judgeCount = computed(() => (myContests.value as any)?.asJudge?.length ?? 
             <BarChart3 class="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div class="text-3xl font-bold">8.4</div>
+            <div class="text-3xl font-bold">{{ avgScore }}</div>
             <p class="text-xs text-muted-foreground">Puntos de un max 10</p>
           </CardContent>
         </Card>

@@ -1,4 +1,4 @@
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
 export interface AppNotification {
@@ -17,6 +17,9 @@ export function useNotifications() {
   let channel: RealtimeChannel | null = null
 
   const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length)
+  const readCount = computed(() => notifications.value.filter((n) => n.read).length)
+  const unreadNotifications = computed(() => notifications.value.filter((n) => !n.read))
+  const readNotifications = computed(() => notifications.value.filter((n) => n.read))
 
   function getSupabase() {
     return useNuxtApp().$supabase as ReturnType<typeof import('@supabase/supabase-js').createClient>
@@ -60,8 +63,14 @@ export function useNotifications() {
       .in('id', unread.map((n) => n.id))
   }
 
-  function subscribeRealtime(userId: string) {
+  async function subscribeRealtime(userId: string) {
     const supabase = getSupabase()
+    try {
+      const { data } = await supabase.auth.getSession()
+      const token = data.session?.access_token
+      if (token) (supabase as any).realtime.setAuth(token)
+    } catch { /* ignore */ }
+
     channel = supabase
       .channel(`notifications:${userId}`)
       .on(
@@ -76,7 +85,17 @@ export function useNotifications() {
           notifications.value.unshift(payload.new as AppNotification)
         }
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('[realtime/notifications] subscribe failed:', status, err)
+          // Auto-retry once after 2s — common when JWT not yet propagated
+          setTimeout(() => {
+            unsubscribe()
+            const u = useAuthStore().user
+            if (u) subscribeRealtime(u.id)
+          }, 2000)
+        }
+      })
   }
 
   function unsubscribe() {
@@ -94,11 +113,23 @@ export function useNotifications() {
     subscribeRealtime(authStore.user.id)
   }
 
+  // Cleanup realtime channel on logout
+  const authStore = useAuthStore()
+  watch(() => authStore.user, (newUser) => {
+    if (!newUser && channel) {
+      unsubscribe()
+      notifications.value = [] // Clear notifications on logout
+    }
+  })
+
   onUnmounted(unsubscribe)
 
   return {
     notifications,
     unreadCount,
+    readCount,
+    unreadNotifications,
+    readNotifications,
     loading,
     init,
     markAsRead,

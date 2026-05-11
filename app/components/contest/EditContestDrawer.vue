@@ -17,7 +17,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { RangeCalendar } from '@/components/ui/range-calendar'
 import {
   NumberField,
@@ -85,7 +84,6 @@ function clearCover() {
 
 const editForm = ref({
   name: '',
-  description: '',
   type: 'general',
   status: 'draft',
   is_rounds_dynamic: false,
@@ -121,7 +119,6 @@ watch(() => props.open, (isOpen) => {
   if (isOpen && props.contest) {
     editForm.value = {
       name: props.contest.name || '',
-      description: props.contest.description || '',
       type: props.contest.type || 'general',
       status: props.contest.status || 'draft',
       is_rounds_dynamic: props.contest.is_rounds_dynamic || false,
@@ -158,7 +155,6 @@ const handleUpdate = async () => {
   try {
     const payload: any = {
       name: editForm.value.name,
-      description: editForm.value.description,
       type: editForm.value.type as any,
       status: editForm.value.status as any,
       is_rounds_dynamic: editForm.value.is_rounds_dynamic,
@@ -209,14 +205,14 @@ const handleOpenAutoFocus = (e: Event) => {
 <template>
   <Drawer :open="open" @update:open="emit('update:open', $event)">
     <DrawerContent @open-auto-focus="handleOpenAutoFocus">
-      <div class="mx-auto w-full max-w-4xl">
-        <DrawerHeader>
+      <div class="mx-auto w-full max-w-4xl" style="max-height: 80vh; display: flex; flex-direction: column; overflow: hidden;">
+        <DrawerHeader style="flex-shrink: 0;">
           <DrawerTitle>Configuración Global</DrawerTitle>
           <DrawerDescription>Modifica los parámetros básicos del concurso.</DrawerDescription>
         </DrawerHeader>
         
-        <div class="p-6">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div style="flex: 1 1 0%; overflow-y: auto; min-height: 0;" class="p-4 sm:p-6">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
             <!-- Columna Izquierda: Identificación y Parámetros -->
             <div class="space-y-6">
               <div class="grid grid-cols-1 gap-4">
@@ -282,10 +278,6 @@ const handleOpenAutoFocus = (e: Event) => {
                   <div class="grid gap-2">
                     <Label for="name" class="text-xs font-bold uppercase tracking-wider text-zinc-400">Nombre del Concurso</Label>
                     <Input id="name" v-model="editForm.name" class="h-10 border-2" placeholder="Ej. Mi Concurso de Baile" />
-                  </div>
-                  <div class="grid gap-2">
-                    <Label for="description" class="text-xs font-bold uppercase tracking-wider text-zinc-400">Descripción</Label>
-                    <Textarea id="description" v-model="editForm.description" rows="3" class="text-sm border-2 resize-none" placeholder="Cuenta de qué trata este concurso..." />
                   </div>
                   <div class="grid gap-2">
                     <Label for="cover_image_file" class="text-xs font-bold uppercase tracking-wider text-zinc-400">Imagen de Fondo</Label>
@@ -392,74 +384,74 @@ const handleOpenAutoFocus = (e: Event) => {
                 <Label class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-400">
                   <CalendarRange class="w-3.5 h-3.5" /> Duración del Concurso
                 </Label>
-                <div class="border-2 rounded-2xl p-4 bg-muted/40 border-border flex justify-center shadow-sm w-fit mx-auto">
-                  <RangeCalendar :model-value="(drawerRange as any)" @update:model-value="drawerRange = $event" class="shadow-none border-none" />
+                <div class="border-2 rounded-2xl p-3 sm:p-4 bg-muted/40 border-border flex justify-center shadow-sm w-full sm:w-fit overflow-x-auto mx-auto">
+                  <RangeCalendar :model-value="(drawerRange as any)" @update:model-value="drawerRange = $event" :number-of-months="1" class="shadow-none border-none" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Inscripciones públicas (dentro del scroll) -->
+          <div class="mt-6">
+            <div class="border-2 border-border rounded-xl p-4 bg-muted/30 space-y-4">
+              <div class="flex items-center justify-between gap-4">
+                <div class="flex items-center gap-2 min-w-0">
+                  <Link2 class="w-4 h-4 text-zinc-500 shrink-0" />
+                  <div class="min-w-0">
+                    <p class="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Inscripciones públicas</p>
+                    <p class="text-[10px] text-muted-foreground">Activa para permitir que los participantes se inscriban con el enlace.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="w-11 h-6 rounded-full relative transition-colors shrink-0"
+                  :class="editForm.registration_open ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700'"
+                  @click="editForm.registration_open = !editForm.registration_open"
+                >
+                  <div
+                    class="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all"
+                    :class="editForm.registration_open ? 'left-[22px]' : 'left-0.5'"
+                  ></div>
+                </button>
+              </div>
+              <div v-if="registrationUrl" class="flex items-center gap-2">
+                <Input :model-value="registrationUrl" readonly class="h-9 text-xs font-mono border-2 bg-background" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  class="h-9 gap-1.5 border-2 text-[10px] font-bold uppercase tracking-widest shrink-0"
+                  @click="copyRegistrationUrl"
+                >
+                  <Check v-if="copiedLink" class="w-3.5 h-3.5 text-emerald-600" />
+                  <Copy v-else class="w-3.5 h-3.5" />
+                  {{ copiedLink ? 'Copiado' : 'Copiar' }}
+                </Button>
+              </div>
+
+              <!-- Cuota de inscripción -->
+              <div class="flex items-center gap-3 pt-2 border-t border-border/60">
+                <Euro class="w-4 h-4 text-zinc-500 shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Cuota de inscripción</p>
+                  <p class="text-[10px] text-muted-foreground">Dejar en 0 para inscripción gratuita. Cobro vía Stripe.</p>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Input
+                    v-model.number="editForm.entry_fee_eur"
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    class="h-9 w-24 text-sm font-mono border-2 text-right"
+                    placeholder="0"
+                  />
+                  <span class="text-xs font-bold text-muted-foreground">€</span>
                 </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- Inscripciones públicas -->
-        <div class="px-6 pb-2">
-          <div class="border-2 border-border rounded-xl p-4 bg-muted/30 space-y-4">
-            <div class="flex items-center justify-between gap-4">
-              <div class="flex items-center gap-2 min-w-0">
-                <Link2 class="w-4 h-4 text-zinc-500 shrink-0" />
-                <div class="min-w-0">
-                  <p class="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Inscripciones públicas</p>
-                  <p class="text-[10px] text-muted-foreground">Activa para permitir que los participantes se inscriban con el enlace.</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                class="w-11 h-6 rounded-full relative transition-colors shrink-0"
-                :class="editForm.registration_open ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700'"
-                @click="editForm.registration_open = !editForm.registration_open"
-              >
-                <div
-                  class="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all"
-                  :class="editForm.registration_open ? 'left-[22px]' : 'left-0.5'"
-                ></div>
-              </button>
-            </div>
-            <div v-if="registrationUrl" class="flex items-center gap-2">
-              <Input :model-value="registrationUrl" readonly class="h-9 text-xs font-mono border-2 bg-background" />
-              <Button
-                type="button"
-                variant="outline"
-                class="h-9 gap-1.5 border-2 text-[10px] font-bold uppercase tracking-widest shrink-0"
-                @click="copyRegistrationUrl"
-              >
-                <Check v-if="copiedLink" class="w-3.5 h-3.5 text-emerald-600" />
-                <Copy v-else class="w-3.5 h-3.5" />
-                {{ copiedLink ? 'Copiado' : 'Copiar' }}
-              </Button>
-            </div>
-
-            <!-- Cuota de inscripción -->
-            <div class="flex items-center gap-3 pt-2 border-t border-border/60">
-              <Euro class="w-4 h-4 text-zinc-500 shrink-0" />
-              <div class="flex-1 min-w-0">
-                <p class="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Cuota de inscripción</p>
-                <p class="text-[10px] text-muted-foreground">Dejar en 0 para inscripción gratuita. Cobro vía Stripe.</p>
-              </div>
-              <div class="flex items-center gap-1">
-                <Input
-                  v-model.number="editForm.entry_fee_eur"
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  class="h-9 w-24 text-sm font-mono border-2 text-right"
-                  placeholder="0"
-                />
-                <span class="text-xs font-bold text-muted-foreground">€</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <DrawerFooter class="flex flex-row justify-end border-t gap-3 p-6 pt-4">
+        <DrawerFooter style="flex-shrink: 0;" class="flex flex-row justify-end border-t gap-3 p-6 pt-4">
           <Button variant="outline" @click="emit('update:open', false)" class="text-[10px] font-bold uppercase tracking-widest px-6 bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 border-2 rounded-md">Cerrar</Button>
           <Button class="bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 gap-2 text-[10px] font-bold uppercase tracking-widest px-6 border-2 border-border rounded-md" :disabled="isUpdating" @click="handleUpdate">
             <Save class="w-4 h-4" />
