@@ -1,9 +1,9 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseClient, serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseClient, serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
+import { sendContestStartedEmail } from '~~/server/utils/email'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { org } = await requireOrgOwner(event)
 
   const client = serverSupabaseClient(event)
   const admin  = serverSupabaseAdmin()
@@ -11,10 +11,6 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
 
   const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug || '')
-
-  // Scope slug lookups to user's organization (slug UNIQUE per org, not global)
-  const { data: userOrg } = await admin
-    .from('organizations').select('id').eq('owner_id', user.id).maybeSingle()
 
   // Resolve contest once (needed by multiple gates below)
   let contestRow: { id: string; status: string; organization_id: string; entry_fee_cents: number | null } | null = null
@@ -24,8 +20,7 @@ export default defineEventHandler(async (event) => {
     if (isUUID) {
       q = q.eq('id', idOrSlug)
     } else {
-      q = q.eq('slug', idOrSlug)
-      if (userOrg?.id) q = q.eq('organization_id', userOrg.id)
+      q = q.eq('slug', idOrSlug).eq('organization_id', org.id)
     }
     const { data, error } = await q.maybeSingle()
     if (error) throw createError({ statusCode: 500, statusMessage: error.message })
@@ -37,12 +32,7 @@ export default defineEventHandler(async (event) => {
   // Gate: setting entry_fee_cents > 0 requires org.stripe_charges_enabled
   if (typeof body?.entry_fee_cents === 'number' && body.entry_fee_cents > 0) {
     const cur = await loadContest()
-    const { data: org } = await admin
-      .from('organizations')
-      .select('stripe_charges_enabled')
-      .eq('id', cur!.organization_id)
-      .single()
-    if (!org?.stripe_charges_enabled) {
+    if (!org.stripe_charges_enabled) {
       throw createError({
         statusCode: 400,
         statusMessage: 'Completa el onboarding de Stripe antes de cobrar inscripciones.',
@@ -66,18 +56,11 @@ export default defineEventHandler(async (event) => {
   if (body?.status === 'active') {
     const cur = await loadContest()
     const effectiveFee = typeof body?.entry_fee_cents === 'number' ? body.entry_fee_cents : (cur!.entry_fee_cents ?? 0)
-    if (effectiveFee > 0) {
-      const { data: org } = await admin
-        .from('organizations')
-        .select('stripe_charges_enabled')
-        .eq('id', cur!.organization_id)
-        .single()
-      if (!org?.stripe_charges_enabled) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: 'Completa el onboarding de Stripe antes de activar un concurso con tarifa.',
-        })
-      }
+    if (effectiveFee > 0 && !org.stripe_charges_enabled) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'Completa el onboarding de Stripe antes de activar un concurso con tarifa.',
+      })
     }
 
     if (cur!.status !== 'active') {
@@ -100,7 +83,29 @@ export default defineEventHandler(async (event) => {
 
   // Use resolved id to avoid slug collision across orgs
   const cur = await loadContest()
+  const prevStatus = cur!.status
   const { data, error } = await client.from('contests').update(body).eq('id', cur!.id).select().single()
   if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+
+  // Send contest_started emails (fire-and-forget)
+  if (body.status === 'active' && prevStatus !== 'active') {
+    const { data: participants } = await admin
+      .from('participants')
+      .select('email, first_name, name')
+      .eq('contest_id', data.id)
+      .eq('status', 'active')
+      .not('email', 'is', null)
+
+    for (const p of participants ?? []) {
+      if (!p.email) continue
+      sendContestStartedEmail({
+        to: p.email,
+        first_name: p.first_name || p.name,
+        contest_name: data.name,
+        contest_slug: data.slug,
+      }).catch(() => {})
+    }
+  }
+
   return data
 })

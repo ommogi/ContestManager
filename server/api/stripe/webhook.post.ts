@@ -39,6 +39,24 @@ async function handleTicketsTopup(evt: Stripe.Event, session: Stripe.Checkout.Se
   return { credited_tickets: qty }
 }
 
+async function handleActivationsTopup(evt: Stripe.Event, session: Stripe.Checkout.Session) {
+  const orgId = session.metadata?.organization_id
+  const qty = parseInt(session.metadata?.quantity || '0', 10)
+  if (!orgId || !qty || qty <= 0) return { ignored: 'missing_metadata' }
+  if (session.payment_status !== 'paid') return { ignored: `payment_status:${session.payment_status}` }
+
+  const admin = serverSupabaseAdmin()
+  const { error } = await admin.rpc('credit_activations', {
+    p_org_id:            orgId,
+    p_quantity:          qty,
+    p_price_cents:       session.amount_total ?? 0,
+    p_stripe_session_id: session.id,
+    p_stripe_event_id:   evt.id,
+  })
+  if (error) throw new Error(`credit_activations: ${error.message}`)
+  return { credited_activations: qty }
+}
+
 async function handleEnrollment(evt: Stripe.Event, session: Stripe.Checkout.Session) {
   if (session.payment_status !== 'paid') return { ignored: `payment_status:${session.payment_status}` }
 
@@ -170,6 +188,10 @@ export default defineEventHandler(async (event) => {
       }
       if (type === 'tickets') {
         const r = await handleTicketsTopup(evt, session)
+        return { received: true, ...r }
+      }
+      if (type === 'activations') {
+        const r = await handleActivationsTopup(evt, session)
         return { received: true, ...r }
       }
       // Default (bundle purchase — metadata has plan)

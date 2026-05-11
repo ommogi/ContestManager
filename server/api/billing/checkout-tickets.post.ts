@@ -1,13 +1,12 @@
 import { defineEventHandler, readBody, createError } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 
-const TICKET_UNIT_CENTS = 300 // 3.00 €
+const TICKET_UNIT_CENTS = 100 // 1.00 €
 const MAX_QUANTITY      = 500
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { user, org } = await requireOrgOwner(event)
 
   const body = (await readBody(event)) || {}
   const quantity = Math.floor(Number(body.quantity ?? 0))
@@ -17,15 +16,6 @@ export default defineEventHandler(async (event) => {
   if (quantity > MAX_QUANTITY) {
     throw createError({ statusCode: 400, statusMessage: `max_quantity_${MAX_QUANTITY}` })
   }
-
-  const admin = serverSupabaseAdmin()
-  const { data: org, error: orgErr } = await admin
-    .from('organizations')
-    .select('id, name')
-    .eq('owner_id', user.id)
-    .maybeSingle()
-  if (orgErr) throw createError({ statusCode: 500, statusMessage: orgErr.message })
-  if (!org) throw createError({ statusCode: 404, statusMessage: 'organization_not_found' })
 
   const config = useRuntimeConfig()
   const baseUrl = config.appBaseUrl || 'http://localhost:3000'
@@ -53,7 +43,7 @@ export default defineEventHandler(async (event) => {
         unit_amount: TICKET_UNIT_CENTS,
         product_data: {
           name: 'Tickets de inscripción',
-          description: 'Compra unitaria · 3,00 € por ticket',
+          description: 'Compra unitaria · 1,00 € por ticket',
         },
       },
     }],

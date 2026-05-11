@@ -1,8 +1,9 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseClient } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const client = serverSupabaseClient(event)
+  const { org } = await requireOrgOwner(event)
+  const client = serverSupabaseAdmin()
   const organizationId = getRouterParam(event, 'orgId')
   const body = await readBody(event)
 
@@ -11,6 +12,10 @@ export default defineEventHandler(async (event) => {
       statusCode: 400,
       statusMessage: 'Organization ID is required'
     })
+  }
+
+  if (organizationId !== org.id) {
+    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
   }
 
   const { full_name, email, specialty } = body

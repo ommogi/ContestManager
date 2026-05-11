@@ -1,9 +1,8 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const user = requireAuth(event)
 
   const roundId = getRouterParam(event, 'id')
   if (!roundId) throw createError({ statusCode: 400, statusMessage: 'Missing round id' })

@@ -1,35 +1,14 @@
 import { defineEventHandler, createError, readBody } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import type { Database, ContestFormPayload } from '~~/types'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { user, org } = await requireOrgOwner(event)
 
   const client = serverSupabaseAdmin()
   const body = await readBody<ContestFormPayload>(event)
 
   if (!body.name) throw createError({ statusCode: 400, statusMessage: "El nombre es obligatorio" })
-
-  // Get the user's organization
-  let { data: orgData, error: orgError } = await client
-    .from('organizations')
-    .select('id')
-    .eq('owner_id', user.id)
-    .limit(1)
-    .single()
-
-  if (!orgData) {
-    // Dev fallback: create org if none exists
-    const { data: newOrg, error: orgErr } = await client.from('organizations').insert({
-      name: 'Default Org',
-      slug: 'default-org-' + Date.now(),
-      owner_id: user.id,
-    }).select('id').single()
-
-    if (orgErr) throw createError({ statusCode: 500, statusMessage: orgErr.message })
-    orgData = newOrg
-  }
 
   // Extraemos variables que necesitan mapeo personalizado
   const { short_description, prizes, rules, ...restBody } = body
@@ -43,7 +22,7 @@ export default defineEventHandler(async (event) => {
       .from('contests')
       .select('id')
       .eq('slug', slug)
-      .eq('organization_id', orgData!.id)
+      .eq('organization_id', org.id)
       .maybeSingle()
     if (!existing) break
     slug = `${baseSlug}-${++suffix}`
@@ -53,7 +32,7 @@ export default defineEventHandler(async (event) => {
     name: restBody.name,
     starts_at: restBody.starts_at || null,
     ends_at: restBody.ends_at || null,
-    organization_id: orgData!.id,
+    organization_id: org.id,
     slug,
     description: short_description || null,
     settings: {

@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseUser, serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseUser, serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { sendEnrollmentEmail } from '~~/server/utils/email'
 
 const ERROR_MESSAGES: Record<string, { status: number; message: string }> = {
@@ -16,8 +16,7 @@ const ERROR_MESSAGES: Record<string, { status: number; message: string }> = {
 }
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const user = requireAuth(event)
 
   const token = getRouterParam(event, 'token')
   if (!token) throw createError({ statusCode: 400, statusMessage: 'Missing token' })

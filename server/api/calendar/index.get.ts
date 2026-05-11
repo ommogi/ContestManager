@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getQuery } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 
 // GET /api/calendar?from=&to=&contest_id=&category_id=&type=&participant_id=
 // Returns rehearsal + performance events for contests owned by the current user's org.
@@ -9,8 +9,7 @@ import { serverSupabaseAdmin } from '~~/server/utils/supabase'
 //   performance_time
 // (the legacy `rehearsals` table is unused by the current UI).
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const { org } = await requireOrgOwner(event)
 
   const q = getQuery(event)
   const from = (q.from as string) || null
@@ -24,11 +23,6 @@ export default defineEventHandler(async (event) => {
   const toMs   = to   ? new Date(to).getTime()   : null
 
   const admin = serverSupabaseAdmin()
-
-  // Resolve user's org → contest scope
-  const { data: org } = await admin
-    .from('organizations').select('id').eq('owner_id', user.id).maybeSingle()
-  if (!org?.id) return { events: [], facets: { contests: [], categories: [], participants: [] } }
 
   // Contests for this org
   let contestQ = admin

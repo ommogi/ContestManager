@@ -1,13 +1,12 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 
 // GET /api/profiles/:id
 // Returns a user profile + their participations.
 // Access: requesting user must be the owner OR an org_owner whose org has a contest
 // the target user is enrolled in.
 export default defineEventHandler(async (event) => {
-  const me = event.context.user
-  if (!me) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const me = requireAuth(event)
 
   const targetId = getRouterParam(event, 'id')
   if (!targetId) throw createError({ statusCode: 400, statusMessage: 'Missing id' })

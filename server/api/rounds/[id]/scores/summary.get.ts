@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const client = serverSupabaseAdmin()
@@ -18,6 +18,9 @@ export default defineEventHandler(async (event) => {
   const categories = roundData.categories as { contest_id: string } | null
   const contestId = categories?.contest_id
   if (!contestId) throw createError({ statusCode: 500, statusMessage: 'Could not resolve contest ID' })
+
+  // Auth gate — require org owner or contest member
+  await requireOrgOwnerOrMember(event, contestId)
 
   // 2. Get judges with avatar_url via RPC (same logic as judge pool: email → auth.users → profiles)
   const { data: allMembers, error: judgesError } = await client

@@ -1,10 +1,9 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user) throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
+  const user = requireAuth(event)
 
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing participant id' })
@@ -20,7 +19,7 @@ export default defineEventHandler(async (event) => {
   if (pErr) throw createError({ statusCode: 500, statusMessage: pErr.message })
   if (!p) throw createError({ statusCode: 404, statusMessage: 'participant_not_found' })
 
-  // Ownership check
+  // Ownership check: participant must belong to the requesting user
   if (p.user_id !== user.id) throw createError({ statusCode: 403, statusMessage: 'forbidden' })
 
   // Block if any non-pending rounds in category
