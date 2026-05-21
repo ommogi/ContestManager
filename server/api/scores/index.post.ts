@@ -1,30 +1,21 @@
 import { defineEventHandler, createError, readBody } from 'h3'
 import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
+import { ScoreBodySchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const user = requireAuth(event)
   const client = serverSupabaseAdmin()
-  const body = await readBody(event)
-
-  const { round_id, participant_id, judge_id, value, notes, promote, admin_user_id, admin_user_name } = body
-
-  if (!round_id || !participant_id || !judge_id) {
-    throw createError({ statusCode: 400, statusMessage: 'round_id, participant_id and judge_id are required' })
+  const rawBody = await readBody(event)
+  const parsed = ScoreBodySchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
+  const { round_id, participant_id, judge_id, value, notes, promote } = parsed.data
 
-  if (value === undefined || value === null || isNaN(Number(value))) {
-    throw createError({ statusCode: 400, statusMessage: 'value is required and must be a number' })
-  }
-
-  // Auth gate: judge_id must match the authenticated user's id
-  // (admins may submit on behalf of a judge via admin_user_id)
-  const isAdminAction = !!admin_user_id
-  if (!isAdminAction && judge_id !== user.id) {
-    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
-  }
-
-  // If admin action, require org owner of the contest
-  if (isAdminAction) {
+  // Auth gate: if judge_id doesn't match the authenticated user,
+  // require org owner of the contest (admin override)
+  let isAdminAction = false
+  if (judge_id !== user.id) {
     const { data: round } = await client
       .from('rounds')
       .select('category_id')
@@ -58,6 +49,7 @@ export default defineEventHandler(async (event) => {
     if (!org) {
       throw createError({ statusCode: 403, statusMessage: 'forbidden' })
     }
+    isAdminAction = true
   }
 
   // Read existing score for audit
@@ -84,29 +76,31 @@ export default defineEventHandler(async (event) => {
         promote: promote ?? false,
         submitted_at: new Date().toISOString(),
         set_by_admin: isAdminAction,
-        admin_user_id: admin_user_id ?? null,
+        admin_user_id: isAdminAction ? user.id : null,
       },
       { onConflict: 'round_id,participant_id,judge_id' }
     )
     .select()
     .single()
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
-  // Write audit log
-  const changedBy = admin_user_id ?? judge_id
-  await client.from('score_audit_logs').insert({
-    round_id,
-    participant_id,
-    judge_id,
-    changed_by: changedBy,
-    changed_by_name: admin_user_name ?? null,
-    action: oldValue !== null ? 'score_updated' : 'score_set',
-    old_value: oldValue,
-    new_value: Number(value),
-    notes: notes ?? null,
-    is_admin_action: isAdminAction,
-  })
+  // Write audit log only if the value actually changed (prevents duplicates on retry)
+  const newValueNum = Number(value)
+  if (oldValue === null || oldValue !== newValueNum) {
+    await client.from('score_audit_logs').insert({
+      round_id,
+      participant_id,
+      judge_id,
+      changed_by: user.id,
+      changed_by_name: user.email ?? null,
+      action: oldValue !== null ? 'score_updated' : 'score_set',
+      old_value: oldValue,
+      new_value: newValueNum,
+      notes: notes ?? null,
+      is_admin_action: isAdminAction,
+    })
+  }
 
   return data
 })

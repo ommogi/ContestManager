@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
 
   let query = client.from('contests').select('*, organizations(*)').limit(1)
   if (isUUID) {
-    query = query.eq('id', idOrSlug)
+    query = query.eq('id', idOrSlug).eq('organization_id', org.id)
   } else {
     query = query.eq('slug', idOrSlug).eq('organization_id', org.id)
   }

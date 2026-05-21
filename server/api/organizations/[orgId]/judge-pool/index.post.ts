@@ -1,11 +1,11 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
+import { JudgePoolSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const { org } = await requireOrgOwner(event)
   const client = serverSupabaseAdmin()
   const organizationId = getRouterParam(event, 'orgId')
-  const body = await readBody(event)
 
   if (!organizationId) {
     throw createError({
@@ -18,10 +18,16 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'forbidden' })
   }
 
-  const { full_name, email, specialty } = body
-  if (!full_name || !email) {
-    throw createError({ statusCode: 400, statusMessage: 'Full name and email are required' })
+  const rawBody = await readBody(event)
+  const parsed = JudgePoolSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
+  const { email, specialty } = parsed.data
+  // Use the email's local part as a placeholder name when none is provided —
+  // judges.full_name is NOT NULL but UI shows it; the real name comes in once
+  // the judge signs up and fills their profile.
+  const full_name = parsed.data.full_name?.trim() || email.split('@')[0] || email
 
   // 1. Buscar o Crear el perfil global del Juez
   let { data: judge, error: judgeError } = await client
@@ -36,7 +42,7 @@ export default defineEventHandler(async (event) => {
       .insert({ full_name, email, specialty })
       .select('id')
       .single()
-    
+
     if (createErrorMsg) throw createError({ statusCode: 500, statusMessage: createErrorMsg.message })
     judge = newJudge
   }

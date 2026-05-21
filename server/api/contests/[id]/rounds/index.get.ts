@@ -1,12 +1,13 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseClient } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const client = serverSupabaseClient(event)
-  const id = getRouterParam(event, 'id') // contest_id
-  
-  // We need rounds mapped to categories inside this contest
-  const { data, error } = await client.from('rounds').select('*, categories!inner(*)').eq('categories.contest_id', id).order('order', { ascending: true })
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  const id = getRouterParam(event, 'id')
+  if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing contest ID' })
+  await requireOrgOwnerOrMember(event, id)
+
+  const admin = serverSupabaseAdmin()
+  const { data, error } = await admin.from('rounds').select('*, categories!inner(*)').eq('categories.contest_id', id).order('order', { ascending: true })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   return data
 })

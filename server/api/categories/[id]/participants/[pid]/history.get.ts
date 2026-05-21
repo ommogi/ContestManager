@@ -1,11 +1,15 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const client = serverSupabaseAdmin()
   const categoryId = getRouterParam(event, 'id')
   const participantId = getRouterParam(event, 'pid')
   if (!categoryId || !participantId) throw createError({ statusCode: 400, statusMessage: 'Missing ID' })
+
+  const { data: category } = await client.from('categories').select('contest_id').eq('id', categoryId).maybeSingle()
+  if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
+  await requireOrgOwnerOrMember(event, category.contest_id)
 
   const { data: participant, error: pErr } = await client
     .from('participants')

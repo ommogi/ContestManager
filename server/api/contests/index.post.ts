@@ -1,14 +1,17 @@
 import { defineEventHandler, createError, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
-import type { Database, ContestFormPayload } from '~~/types'
+import { ContestCreateSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const { user, org } = await requireOrgOwner(event)
 
   const client = serverSupabaseAdmin()
-  const body = await readBody<ContestFormPayload>(event)
-
-  if (!body.name) throw createError({ statusCode: 400, statusMessage: "El nombre es obligatorio" })
+  const rawBody = await readBody(event)
+  const parsed = ContestCreateSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
+  }
+  const body = parsed.data
 
   // Extraemos variables que necesitan mapeo personalizado
   const { short_description, prizes, rules, ...restBody } = body
@@ -41,6 +44,6 @@ export default defineEventHandler(async (event) => {
     }
   }).select().single()
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   return data
 })

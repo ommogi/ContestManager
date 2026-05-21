@@ -22,6 +22,11 @@ export default defineEventHandler(async (event) => {
   const fromMs = from ? new Date(from).getTime() : null
   const toMs   = to   ? new Date(to).getTime()   : null
 
+  // Validate date range params so NaN doesn't silently bypass the filter
+  if ((from && Number.isNaN(fromMs)) || (to && Number.isNaN(toMs))) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid date range' })
+  }
+
   const admin = serverSupabaseAdmin()
 
   // Contests for this org
@@ -156,11 +161,17 @@ export default defineEventHandler(async (event) => {
 })
 
 // Normalize TEXT timestamp ("2026-04-25T01:00", "2026-04-25 01:00:00", ISO with tz...) to ISO.
+// For datetime-local strings (no tz offset) we treat them as UTC to avoid
+// shifting the displayed day when the server is in a different timezone.
 function toIso(raw: any): string | null {
   if (!raw) return null
   const s = String(raw).trim()
   if (!s) return null
-  const d = new Date(s)
+  // If it looks like a datetime-local without tz (e.g. "2026-04-25T01:00" or "2026-04-25 01:00")
+  // append :00Z so it stays at the intended wall-clock time.
+  const localPattern = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}$/
+  const normalized = localPattern.test(s) ? `${s}:00Z` : s
+  const d = new Date(normalized)
   if (Number.isNaN(d.getTime())) return null
   return d.toISOString()
 }

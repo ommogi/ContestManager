@@ -1,6 +1,7 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
+import { CheckoutTicketsSchema } from '~~/server/utils/schemas'
 
 const TICKET_UNIT_CENTS = 100 // 1.00 €
 const MAX_QUANTITY      = 500
@@ -8,23 +9,16 @@ const MAX_QUANTITY      = 500
 export default defineEventHandler(async (event) => {
   const { user, org } = await requireOrgOwner(event)
 
-  const body = (await readBody(event)) || {}
-  const quantity = Math.floor(Number(body.quantity ?? 0))
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_quantity' })
+  const rawBody = await readBody(event)
+  const parsed = CheckoutTicketsSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'invalid_quantity', data: parsed.error.issues })
   }
-  if (quantity > MAX_QUANTITY) {
-    throw createError({ statusCode: 400, statusMessage: `max_quantity_${MAX_QUANTITY}` })
-  }
+  const { quantity, return_path } = parsed.data
+  const returnPath = return_path ?? '/billing'
 
   const config = useRuntimeConfig()
   const baseUrl = config.appBaseUrl || 'http://localhost:3000'
-
-  // Optional caller-provided return path. Must be an internal path starting with "/"
-  // (no scheme, no //) — sanitized to prevent open-redirect.
-  let returnPath = '/billing'
-  const raw = typeof body.return_path === 'string' ? body.return_path : ''
-  if (raw.startsWith('/') && !raw.startsWith('//')) returnPath = raw
 
   const sep = returnPath.includes('?') ? '&' : '?'
   const successUrl = `${baseUrl}${returnPath}${sep}topup=success&session_id={CHECKOUT_SESSION_ID}`

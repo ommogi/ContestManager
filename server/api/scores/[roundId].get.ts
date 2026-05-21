@@ -23,7 +23,10 @@ export default defineEventHandler(async (event) => {
   if (!cat?.contest_id) throw createError({ statusCode: 500, statusMessage: 'Could not resolve contest' })
   await requireOrgOwnerOrMember(event, cat.contest_id)
 
-  const { data, error } = await client.from('scores').select('*').eq('round_id', roundId)
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  const { data, error } = await client.from('scores').select('id, round_id, participant_id, judge_id, value, notes, promote, submitted_at, set_by_admin').eq('round_id', roundId)
+  if (error) {
+    console.error('[scores] fetch failed:', error.message)
+    throw createError({ statusCode: 500, statusMessage: 'internal_error' })
+  }
   return data
 })

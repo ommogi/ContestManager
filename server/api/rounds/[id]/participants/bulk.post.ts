@@ -1,10 +1,11 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { BulkRoundParticipantsSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const client = serverSupabaseAdmin()
   const roundId = getRouterParam(event, 'id')
-  
+
   if (!roundId) throw createError({ statusCode: 400, statusMessage: 'Missing Round ID' })
 
   // Resolve contest_id → auth gate
@@ -23,10 +24,14 @@ export default defineEventHandler(async (event) => {
   if (!cat?.contest_id) throw createError({ statusCode: 500, statusMessage: 'Could not resolve contest' })
   await requireOrgOwnerOrMember(event, cat.contest_id)
 
-  const body = await readBody(event) // { participantIds: string[] }
-  if (!body.participantIds) throw createError({ statusCode: 400, statusMessage: 'Missing participantIds' })
+  const rawBody = await readBody(event)
+  const parsed = BulkRoundParticipantsSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
+  }
+  const { participantIds } = parsed.data
 
-  const roundParticipants = body.participantIds.map((pid: string, idx: number) => ({
+  const roundParticipants = participantIds.map((pid: string, idx: number) => ({
     round_id: roundId,
     participant_id: pid,
     order: idx + 1,
@@ -37,6 +42,6 @@ export default defineEventHandler(async (event) => {
     .from('round_participants')
     .insert(roundParticipants)
     
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   return { success: true }
 })

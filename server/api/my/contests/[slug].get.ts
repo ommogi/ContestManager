@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   // then pick the one where the current user is actually enrolled / member.
   const { data: slugMatches, error: slugErr } = await client
     .from('contests')
-    .select('id, name, slug, description, type, status, starts_at, ends_at, settings, is_rounds_dynamic, cover_image_url, created_at')
+    .select('id, name, slug, description, rules, type, status, starts_at, ends_at, settings, is_rounds_dynamic, cover_image_url, created_at')
     .eq('slug', slug)
   if (slugErr) throw createError({ statusCode: 500, statusMessage: slugErr.message })
   if (!slugMatches || slugMatches.length === 0) {
@@ -75,7 +75,7 @@ export default defineEventHandler(async (event) => {
     .eq('contest_id', contest.id)
     .eq('user_id', user.id)
 
-  if (pError) throw createError({ statusCode: 500, statusMessage: pError.message })
+  if (pError) { console.error("[api error]", pError.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
   // If user is not a participant, check if they're a judge/member
   // Try by user_id first, then by email (for legacy records added without user_id)

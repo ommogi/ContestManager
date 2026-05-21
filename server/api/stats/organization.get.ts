@@ -43,18 +43,15 @@ export default defineEventHandler(async (event) => {
 
   // Datos para LineChart - Crecimiento mensual
   const monthlyContests = contests?.reduce((acc: any, c: any) => {
-    const month = new Date(c.created_at).toLocaleDateString('es-ES', { month: 'short', year: 'numeric' })
-    acc[month] = (acc[month] || 0) + 1
+    const d = new Date(c.created_at)
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    acc[monthKey] = (acc[monthKey] || 0) + 1
     return acc
   }, {}) || {}
 
   const contestGrowthData = Object.entries(monthlyContests)
     .map(([month, concursos]) => ({ month, concursos: concursos as number }))
-    .sort((a: any, b: any) => {
-      const dateA = new Date(a.month)
-      const dateB = new Date(b.month)
-      return dateA.getTime() - dateB.getTime()
-    })
+    .sort((a: any, b: any) => a.month.localeCompare(b.month))
 
   // 2. Estadísticas de Participantes
   const contestIds = contests?.map((c: any) => c.id) || []
@@ -91,18 +88,15 @@ export default defineEventHandler(async (event) => {
 
   // Datos para LineChart - Crecimiento mensual de participantes
   const monthlyParticipants = participants.reduce((acc: any, p: any) => {
-    const month = new Date(p.created_at).toLocaleDateString('es-ES', { month: 'short', year: 'numeric' })
-    acc[month] = (acc[month] || 0) + 1
+    const d = new Date(p.created_at)
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    acc[monthKey] = (acc[monthKey] || 0) + 1
     return acc
   }, {})
 
   const participantGrowthData = Object.entries(monthlyParticipants)
     .map(([month, participantes]) => ({ month, participantes: participantes as number }))
-    .sort((a: any, b: any) => {
-      const dateA = new Date(a.month)
-      const dateB = new Date(b.month)
-      return dateA.getTime() - dateB.getTime()
-    })
+    .sort((a: any, b: any) => a.month.localeCompare(b.month))
 
   // Tasa de conversión
   const paidParticipants = participants.filter((p: any) => p.payment_status === 'paid').length
@@ -123,18 +117,15 @@ export default defineEventHandler(async (event) => {
 
   // Datos para BarChart - Ingresos mensuales
   const monthlyRevenue = transactions?.reduce((acc: any, t: any) => {
-    const month = new Date(t.created_at).toLocaleDateString('es-ES', { month: 'short', year: 'numeric' })
-    acc[month] = (acc[month] || 0) + (t.amount_cents || 0)
+    const d = new Date(t.created_at)
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    acc[monthKey] = (acc[monthKey] || 0) + (t.amount_cents || 0)
     return acc
   }, {}) || {}
 
   const revenueMonthlyData = Object.entries(monthlyRevenue)
     .map(([month, ingresos]) => ({ month, ingresos: (ingresos as number) / 100 }))
-    .sort((a: any, b: any) => {
-      const dateA = new Date(a.month)
-      const dateB = new Date(b.month)
-      return dateA.getTime() - dateB.getTime()
-    })
+    .sort((a: any, b: any) => a.month.localeCompare(b.month))
 
   // Ticket promedio
   const averageTicket = transactions && transactions.length > 0

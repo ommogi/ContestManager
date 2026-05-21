@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
     .select('id, contest_id, user_id, payment_status, amount_paid_cents')
     .eq('stripe_checkout_session_id', String(session_id))
     .maybeSingle()
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   if (!p) return { status: 'pending' }
   if (p.user_id !== user.id) throw createError({ statusCode: 403, statusMessage: 'forbidden' })
 

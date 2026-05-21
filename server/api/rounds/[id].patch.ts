@@ -1,9 +1,8 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseClient, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { sendRankingPublishedEmail } from '~~/server/utils/email'
 
 export default defineEventHandler(async (event) => {
-  const client = serverSupabaseClient(event)
   const admin = serverSupabaseAdmin()
   const id = getRouterParam(event, 'id')
   const body = await readBody(event)
@@ -28,7 +27,7 @@ export default defineEventHandler(async (event) => {
 
   // Gate: if activating a round, the parent contest must be active
   if (body?.status === 'active') {
-    const { data: contestInfo, error: contestErr } = await client
+    const { data: contestInfo, error: contestErr } = await admin
       .from('categories')
       .select('contests!inner(status)')
       .eq('id', roundInfo.category_id)
@@ -46,20 +45,26 @@ export default defineEventHandler(async (event) => {
   }
 
   // Read current state before update to detect is_published transition
-  const { data: prev } = await client
+  const { data: prev } = await admin
     .from('rounds')
     .select('is_published, is_ranking, category_id')
     .eq('id', id)
     .single()
 
-  const { data, error } = await client
+  const allowed = ['name', 'order', 'status', 'scoring_type', 'max_score', 'next_round_id', 'is_final', 'is_ranking', 'is_published', 'started_at', 'closed_at']
+  const updates: Record<string, any> = {}
+  for (const key of allowed) {
+    if (key in body) updates[key] = body[key]
+  }
+
+  const { data, error } = await admin
     .from('rounds')
-    .update(body)
+    .update(updates)
     .eq('id', id)
     .select()
     .single()
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
   // Send ranking_published emails (fire-and-forget)
   if (!prev?.is_published && data.is_published && data.is_ranking) {
@@ -88,7 +93,7 @@ export default defineEventHandler(async (event) => {
         contest_name: contestName,
         category_name: categoryName,
         contest_slug: contestSlug,
-      }).catch(() => {})
+      }).catch((e: any) => { console.error('[rounds.patch] email failed:', e?.message) })
     }
   }
 
