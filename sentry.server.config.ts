@@ -17,7 +17,7 @@ if (dsn) {
             ? event.request.data
             : JSON.stringify(event.request.data)
           if (s.length > 4000) event.request.data = '[redacted:large]'
-        } catch {}
+        } catch { /* redaction failed, keep original */ }
       }
       return event
     },

@@ -11,7 +11,7 @@ const props = defineProps<{
 const lightboxOpen = ref(false)
 
 const initials = computed(() =>
-  props.name
+  (props.name || '')
     .split(' ')
     .filter(Boolean)
     .map(n => n[0])
@@ -55,7 +55,7 @@ const sizeClass = computed(() => props.size === 'md' ? 'h-10 w-10' : 'h-8 w-8')
 
     <!-- Text -->
     <div class="flex flex-col min-w-0">
-      <span class="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight truncate">{{ name }}</span>
+      <span class="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight truncate">{{ name || '—' }}</span>
       <span v-if="email" class="text-[10px] text-zinc-400 font-medium truncate max-w-[160px]">{{ email }}</span>
     </div>
 

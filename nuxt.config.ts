@@ -16,7 +16,7 @@ const modules = [
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   ssr: false,
-  devtools: { enabled: true },
+  devtools: { enabled: false },
   modules,
   sentry: {
     sourceMapsUploadOptions: {
@@ -48,7 +48,14 @@ export default defineNuxtConfig({
   },
   nitro: {
     routeRules: {
-      '/api/stripe/webhook': { cors: false }
+      '/api/stripe/webhook': { cors: false },
+      '/**': {
+        headers: {
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        }
+      }
     }
   }
 })

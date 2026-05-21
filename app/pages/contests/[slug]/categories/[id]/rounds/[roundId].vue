@@ -63,6 +63,21 @@ const currentRoundSummary = computed(() => roundSummariesMap.value[roundId])
 const isFinalRound = computed(() => (currentRound.value as any)?.is_final === true)
 const isRankingView = computed(() => (currentRound.value as any)?.is_ranking === true)
 
+// ── Participant display name (fallback: name → first_name + last_name → lookup by id) ──
+function displayName(p: any, fallbackId?: string): string {
+  if (p?.name) return p.name
+  const fn = `${p?.first_name ?? ''} ${p?.last_name ?? ''}`.trim()
+  if (fn) return fn
+  // Last resort: lookup in participants store by id
+  if (fallbackId) {
+    const found = participants.value.find((x: any) => x.id === fallbackId)
+    if (found?.name) return found.name
+    const fn2 = `${found?.first_name ?? ''} ${found?.last_name ?? ''}`.trim()
+    if (fn2) return fn2
+  }
+  return '—'
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 const participantFilter = ref('')
 const judgeFilter = ref('')
@@ -72,7 +87,7 @@ const filteredRoundParticipants = computed(() => {
   const q = participantFilter.value.toLowerCase().trim()
   if (!q) return currentRoundParticipants.value
   return currentRoundParticipants.value.filter((rp: any) =>
-    rp.participant?.name?.toLowerCase().includes(q)
+    displayName(rp.participant, rp.participant_id).toLowerCase().includes(q)
   )
 })
 
@@ -108,7 +123,7 @@ const filteredMatrixSummaries = computed(() => {
   const summaries = currentRoundSummary.value?.participant_summaries ?? []
   if (!q) return summaries
   return summaries.filter((s: any) => {
-    const name = participants.value.find((p: any) => p.id === s.participant_id)?.name ?? ''
+    const name = displayName(participants.value.find((p: any) => p.id === s.participant_id))
     return name.toLowerCase().includes(q)
   })
 })
@@ -206,13 +221,13 @@ const filteredJudgeScoredParticipants = computed(() => {
   const items = currentJudgeDetails.value?.scored ?? []
   if (!judgeDetailFilter.value.trim()) return items
   const q = judgeDetailFilter.value.toLowerCase()
-  return items.filter((item: any) => item.participant?.name?.toLowerCase().includes(q))
+  return items.filter((item: any) => displayName(item.participant).toLowerCase().includes(q))
 })
 const filteredJudgePendingParticipants = computed(() => {
   const items = currentJudgeDetails.value?.pending ?? []
   if (!judgeDetailFilter.value.trim()) return items
   const q = judgeDetailFilter.value.toLowerCase()
-  return items.filter((item: any) => item.participant?.name?.toLowerCase().includes(q))
+  return items.filter((item: any) => displayName(item.participant).toLowerCase().includes(q))
 })
 
 const openJudgeDetails = (judgeUserId: string) => {
@@ -330,7 +345,7 @@ function openOverride(rp: any) {
   overrideDraft.value = {
     rpId: rp.id,
     participantId: rp.participant_id,
-    participantName: rp.participant?.name ?? '',
+    participantName: displayName(rp.participant),
     currentAvg: summary?.average ?? 0,
     value: summary?.final_score_override != null ? String(summary.final_score_override) : '',
     notes: summary?.final_score_override_notes ?? '',
@@ -345,7 +360,7 @@ function openOverrideFromMatrix(s: any) {
   overrideDraft.value = {
     rpId: rp.id,
     participantId: s.participant_id,
-    participantName: participants.value.find((p: any) => p.id === s.participant_id)?.name ?? '',
+    participantName: displayName(participants.value.find((p: any) => p.id === s.participant_id)),
     currentAvg: summary?.average ?? 0,
     value: summary?.final_score_override != null ? String(summary.final_score_override) : '',
     notes: summary?.final_score_override_notes ?? '',
@@ -388,8 +403,8 @@ const openAuditLog = async () => {
   isAuditOpen.value = true
   isLoadingAudit.value = true
   try {
-    const data = await $fetch(`/api/rounds/${roundId}/audit-logs` as any)
-    auditLogs.value = (data as any[]) || []
+    const data = await $fetch(`/api/rounds/${roundId}/audit-logs` as any) as any
+    auditLogs.value = (data?.items || [])
   } catch (e) {
     toast.error('Error cargando registro')
   } finally {
@@ -431,8 +446,8 @@ async function openScoreLogs(participantId: string, judgeUserId: string, partici
   isScoreLogsOpen.value = true
   isLoadingScoreLogs.value = true
   try {
-    const data = await $fetch(`/api/rounds/${roundId}/audit-logs` as any) as any[]
-    scoreLogs.value = (data || []).filter((l: any) =>
+    const data = await $fetch(`/api/rounds/${roundId}/audit-logs` as any) as any
+    scoreLogs.value = (data?.items || []).filter((l: any) =>
       l.participant_id === participantId && l.judge_id === judgeUserId
     )
   } catch {
@@ -461,7 +476,7 @@ const allPromotionParticipants = computed(() => {
   return [...summaries]
     .map((s: any) => {
       const p = participants.value.find((part: any) => part.id === s.participant_id)
-      return { ...s, name: (p as any)?.name ?? '—' }
+      return { ...s, name: displayName(p) }
     })
     .sort((a: any, b: any) => (b.final_score ?? b.average) - (a.final_score ?? a.average))
 })
@@ -580,13 +595,13 @@ async function handleToggleFinal(val: boolean) {
         (r: any) => r.category_id === categoryId && r.is_ranking === true
       )
       if (ranking) {
-        try { await contestStore.deleteRound(ranking.id) } catch {}
+        await contestStore.deleteRound(ranking.id)
       }
       await $fetch(`/api/rounds/${roundId}`, {
         method: 'PATCH',
         body: { is_final: false, status: 'active', closed_at: null }
       })
-      try { await contestStore.updateCategory(categoryId, { status: 'active' } as any) } catch {}
+      await contestStore.updateCategory(categoryId, { status: 'active' } as any)
       toast.success('Marca de ronda final eliminada')
     }
     const contestId = currentContest.value?.id
@@ -796,9 +811,7 @@ async function handleFinalizeFinal() {
       })
     }
     // Publish ranking → close category
-    try {
-      await contestStore.updateCategory(categoryId, { status: 'closed' } as any)
-    } catch {}
+    await contestStore.updateCategory(categoryId, { status: 'closed' } as any)
     // Refresh rounds
     const contestId = currentContest.value?.id
     if (contestId) {
@@ -836,10 +849,10 @@ async function handleRevertFinal() {
       await contestStore.deleteRound(ranking.id)
     } else {
       // No ranking → just reopen category + reactivate this round
-      try { await contestStore.updateCategory(categoryId, { status: 'active' } as any) } catch {}
+      await contestStore.updateCategory(categoryId, { status: 'active' } as any)
     }
     // Always reopen category (deleteRound may not do it if round had no is_ranking detection)
-    try { await contestStore.updateCategory(categoryId, { status: 'active' } as any) } catch {}
+    await contestStore.updateCategory(categoryId, { status: 'active' } as any)
 
     // 2. Clear is_final + reopen the real final round
     await $fetch(`/api/rounds/${finalRoundId}`, {
@@ -974,9 +987,9 @@ const sortedParticipantsForPdf = computed(() => {
       return tA.localeCompare(tB)
     }
     if (pdfSortBy.value === 'apellido') {
-      return getLastName(pA?.name || '').localeCompare(getLastName(pB?.name || ''))
+      return getLastName(displayName(pA)).localeCompare(getLastName(displayName(pB)))
     }
-    return (pA?.name || '').localeCompare(pB?.name || '')
+    return displayName(pA).localeCompare(displayName(pB))
   })
 })
 
@@ -1080,7 +1093,7 @@ const generatePdf = async () => {
     doc.setTextColor(20, 20, 20)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
-    doc.text(doc.splitTextToSize(p?.name || '—', cols[1].width - 4)[0], x + 2, y + 6)
+    doc.text(doc.splitTextToSize(displayName(p), cols[1].width - 4)[0], x + 2, y + 6)
     x += cols[1].width
 
     doc.setFont('helvetica', 'normal')
@@ -1325,13 +1338,13 @@ function statusLabel(status: string) {
                   <TableCell class="pl-8 py-4">
                     <div class="flex items-center gap-4">
                       <AvatarBubble
-                        :name="rp.participant?.name || '??'"
+                        :name="displayName(rp.participant, rp.participant_id)"
                         :avatar-url="null"
                         size="w-10 h-10"
                         text-size="text-[10px]"
                       />
                       <div class="flex flex-col">
-                        <span class="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight">{{ rp.participant?.name }}</span>
+                        <span class="text-sm font-bold text-zinc-900 dark:text-zinc-100 leading-tight">{{ displayName(rp.participant, rp.participant_id) }}</span>
                         <span class="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mt-1">{{ rp.participant?.dni || '----' }}</span>
                       </div>
                     </div>
@@ -1508,7 +1521,7 @@ function statusLabel(status: string) {
           <div class="flex-1 min-w-0">
             <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-0.5">Puntuaciones del participante</p>
             <h2 class="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 truncate uppercase">
-              {{ currentParticipantDetails?.participant?.name }}
+              {{ displayName(currentParticipantDetails?.participant) }}
             </h2>
           </div>
           <div class="text-right shrink-0">
@@ -1698,13 +1711,13 @@ function statusLabel(status: string) {
                       <TableCell class="pl-5 py-3">
                         <div class="flex items-center gap-2">
                           <AvatarBubble
-                            :name="item.participant?.name || 'P'"
+                            :name="displayName(item.participant)"
                             :avatar-url="item.participant?.avatar_url ?? null"
                             size="w-7 h-7"
                             text-size="text-[9px]"
                           />
                           <div class="flex flex-col min-w-0">
-                            <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[140px] uppercase">{{ item.participant?.name }}</span>
+                            <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[140px] uppercase">{{ displayName(item.participant) }}</span>
                             <span v-if="item.score.set_by_admin" class="text-[8px] font-black uppercase tracking-widest text-purple-600 dark:text-purple-400">★ Modificado por admin</span>
                           </div>
                         </div>
@@ -1742,12 +1755,12 @@ function statusLabel(status: string) {
                       <TableCell class="pl-5 py-3">
                         <div class="flex items-center gap-2">
                           <AvatarBubble
-                            :name="item.participant?.name || 'P'"
+                            :name="displayName(item.participant)"
                             :avatar-url="item.participant?.avatar_url ?? null"
                             size="w-7 h-7"
                             text-size="text-[9px]"
                           />
-                          <span class="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[140px] uppercase">{{ item.participant?.name }}</span>
+                          <span class="text-sm font-bold text-zinc-900 dark:text-zinc-100 truncate max-w-[140px] uppercase">{{ displayName(item.participant) }}</span>
                         </div>
                       </TableCell>
                       <TableCell class="text-center py-2">
@@ -1801,12 +1814,12 @@ function statusLabel(status: string) {
                     <TableCell class="pl-5 py-3">
                       <div class="flex items-center gap-2">
                         <AvatarBubble
-                          :name="item.participant?.name || 'P'"
+                          :name="displayName(item.participant)"
                           :avatar-url="item.participant?.avatar_url ?? null"
                           size="w-7 h-7"
                           text-size="text-[9px]"
                         />
-                        <span class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 uppercase">{{ item.participant?.name }}</span>
+                        <span class="text-sm font-semibold text-zinc-700 dark:text-zinc-300 uppercase">{{ displayName(item.participant) }}</span>
                         <button
                           class="ml-auto text-[9px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-400 hover:bg-purple-200 transition-colors"
                           @click="openAdminScoreEntry(selectedJudgeUserId!, item.participant.id)"
@@ -1927,12 +1940,12 @@ function statusLabel(status: string) {
                   <TableCell class="pl-8 py-4 font-bold text-sm text-zinc-900 dark:text-zinc-100">
                     <div class="flex items-center gap-3">
                       <AvatarBubble
-                        :name="participants.find(p => p.id === s.participant_id)?.name || '??'"
+                        :name="displayName(participants.find(p => p.id === s.participant_id))"
                         :avatar-url="null"
                         size="w-8 h-8"
                         text-size="text-[9px]"
                       />
-                      {{ participants.find(p => p.id === s.participant_id)?.name }}
+                      {{ displayName(participants.find(p => p.id === s.participant_id)) }}
                     </div>
                   </TableCell>
                   <TableCell v-for="j in currentRoundSummary?.judges" :key="j.user_id" class="text-center text-sm font-medium text-zinc-400 border-x border-zinc-50 dark:border-zinc-900">
@@ -2303,8 +2316,8 @@ function statusLabel(status: string) {
                 >
                   <TableCell class="pl-5 py-3">
                     <div class="flex items-center gap-2">
-                      <AvatarBubble :name="rp.participant?.name || 'P'" :avatar-url="rp.participant?.avatar_url ?? null" size="w-7 h-7" text-size="text-[9px]" />
-                      <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 uppercase">{{ rp.participant?.name }}</span>
+                      <AvatarBubble :name="displayName(rp.participant, rp.participant_id)" :avatar-url="rp.participant?.avatar_url ?? null" size="w-7 h-7" text-size="text-[9px]" />
+                      <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 uppercase">{{ displayName(rp.participant, rp.participant_id) }}</span>
                     </div>
                   </TableCell>
                   <TableCell class="py-2">
@@ -2380,8 +2393,8 @@ function statusLabel(status: string) {
                 >
                   <TableCell class="pl-5 py-3">
                     <div class="flex items-center gap-2">
-                      <AvatarBubble :name="rp.participant?.name || 'P'" :avatar-url="rp.participant?.avatar_url ?? null" size="w-7 h-7" text-size="text-[9px]" />
-                      <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 uppercase">{{ rp.participant?.name }}</span>
+                      <AvatarBubble :name="displayName(rp.participant, rp.participant_id)" :avatar-url="rp.participant?.avatar_url ?? null" size="w-7 h-7" text-size="text-[9px]" />
+                      <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 uppercase">{{ displayName(rp.participant, rp.participant_id) }}</span>
                     </div>
                   </TableCell>
                   <TableCell class="py-2 pr-5">
@@ -2629,7 +2642,7 @@ function statusLabel(status: string) {
           </div>
           <div class="flex-1 min-w-0">
             <p class="text-[10px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400 mb-0.5">Historial</p>
-            <h2 class="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">{{ historyData?.participant?.name || '—' }}</h2>
+            <h2 class="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">{{ displayName(historyData?.participant) }}</h2>
           </div>
         </div>
         <div class="p-6 max-h-[70vh] overflow-y-auto space-y-4">

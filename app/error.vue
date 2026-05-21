@@ -11,6 +11,7 @@ const props = defineProps<{
 }>()
 
 const is404 = computed(() => props.error?.statusCode === 404)
+const isDev = computed(() => import.meta.dev)
 
 function goHome() {
   clearError({ redirect: '/' })
@@ -72,7 +73,7 @@ function goBack() {
       </div>
 
       <!-- Stack trace (dev only) -->
-      <details v-if="error?.stack && process.dev" class="mt-8 text-left">
+      <details v-if="error?.stack && isDev" class="mt-8 text-left">
         <summary class="text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
           Ver stack trace (development)
         </summary>

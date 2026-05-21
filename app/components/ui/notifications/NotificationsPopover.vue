@@ -1,21 +1,47 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, reactive } from 'vue'
 import { Bell } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useNotifications } from '@/composables/useNotifications'
+import { apiClient } from '~/api/apiClient'
 
 const { notifications, unreadCount, unreadNotifications, readNotifications, loading, init, markAsRead, markAllAsRead } = useNotifications()
 
 type Tab = 'all' | 'unread' | 'read'
-const activeTab = ref<Tab>('all')
+const activeTab = ref<Tab>('unread')
+
+// Per-invitation response state so buttons disappear immediately after click,
+// without waiting for a full refresh.
+const responded = reactive<Record<string, 'accepted' | 'rejected'>>({})
+const responding = ref<Record<string, boolean>>({})
 
 onMounted(() => init())
 
-function onOpenChange(open: boolean) {
-  if (open && unreadCount.value > 0) {
-    markAllAsRead()
+// No auto mark-all on open — keeps the "Nuevas" tab populated until the user
+// clicks individual items or the "Marcar todas como leídas" action.
+
+async function respondInvitation(notification: any, action: 'accept' | 'reject') {
+  const token = notification?.payload?.invitation_token as string | undefined
+  if (!token) return
+  if (responding.value[notification.id]) return
+
+  responding.value[notification.id] = true
+  try {
+    await apiClient(`/api/invitations/${token}/respond`, {
+      method: 'POST',
+      body: { action },
+    })
+    responded[notification.id] = action === 'accept' ? 'accepted' : 'rejected'
+    toast.success(action === 'accept' ? 'Invitación aceptada' : 'Invitación rechazada')
+    markAsRead(notification.id)
+  } catch (err: any) {
+    const msg = err?.data?.statusMessage || err?.statusMessage || 'No se pudo procesar la respuesta'
+    toast.error(msg)
+  } finally {
+    responding.value[notification.id] = false
   }
 }
 
@@ -25,11 +51,11 @@ const filteredNotifications = computed(() => {
   return notifications.value
 })
 
-const tabs: { key: Tab; label: string; badge?: number }[] = [
-  { key: 'all', label: 'Todas' },
+const tabs = computed<{ key: Tab; label: string; badge?: number }[]>(() => [
   { key: 'unread', label: 'Nuevas', badge: unreadCount.value },
+  { key: 'all', label: 'Todas' },
   { key: 'read', label: 'Vistas' },
-]
+])
 
 function formatDate(iso: string) {
   const diff = Date.now() - new Date(iso).getTime()
@@ -49,10 +75,20 @@ function targetPath(type: string, payload: Record<string, unknown>): string | nu
   if (type === 'org_participant_enrolled' || type === 'org_participant_unenrolled') {
     return `/contests/${slug}/inscriptions`
   }
-  if (type === 'judge_assigned') {
+  if (type === 'judge_assigned' || type === 'judge_invitation_accepted' || type === 'judge_invitation_rejected') {
     return `/contests/${slug}`
   }
+  if (type === 'judge_invitation') {
+    // Invitation rows render inline accept/reject buttons; no body link needed.
+    return null
+  }
   return `/my-contests/${slug}`
+}
+
+function isPendingInvitation(notification: any): boolean {
+  if (notification.type !== 'judge_invitation') return false
+  if (responded[notification.id]) return false
+  return !!notification?.payload?.invitation_token
 }
 
 // Split body text into segments, turning the quoted contest name into a link
@@ -76,13 +112,13 @@ function bodyParts(notification: any) {
 </script>
 
 <template>
-  <Popover @update:open="onOpenChange">
+  <Popover>
     <PopoverTrigger as-child>
       <Button size="icon" variant="ghost" class="relative rounded-full w-9 h-9" aria-label="Abrir notificaciones">
         <Bell :size="16" :stroke-width="2" aria-hidden="true" />
         <Badge
           v-if="unreadCount > 0"
-          class="absolute -top-2 left-full min-w-5 -translate-x-1/2 px-1 pointer-events-none"
+          class="absolute -top-2 left-full h-5 min-w-5 -translate-x-1/2 flex items-center justify-center border-0 px-1 py-0 text-[10px] pointer-events-none"
         >
           {{ unreadCount > 99 ? '99+' : unreadCount }}
         </Badge>
@@ -90,8 +126,15 @@ function bodyParts(notification: any) {
     </PopoverTrigger>
 
     <PopoverContent class="w-80 p-1 max-h-[480px] flex flex-col" align="end">
-      <div class="flex items-baseline justify-between gap-4 px-3 py-2 shrink-0">
+      <div class="flex items-center justify-between gap-2 px-3 py-2 shrink-0">
         <div class="text-sm font-semibold">Notificaciones</div>
+        <button
+          v-if="unreadCount > 0"
+          class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+          @click="markAllAsRead"
+        >
+          Marcar todas leídas
+        </button>
       </div>
 
       <!-- Tabs -->
@@ -146,6 +189,39 @@ function bodyParts(notification: any) {
                   <span v-else>{{ part.text }}</span>
                 </template>
               </p>
+
+              <!-- Accept/Reject actions for pending judge invitations -->
+              <div
+                v-if="isPendingInvitation(notification)"
+                class="flex gap-2 pt-1"
+                @click.stop
+              >
+                <Button
+                  size="sm"
+                  class="h-7 px-3 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                  :disabled="responding[notification.id]"
+                  @click.stop="respondInvitation(notification, 'accept')"
+                >
+                  Aceptar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  class="h-7 px-3 text-xs"
+                  :disabled="responding[notification.id]"
+                  @click.stop="respondInvitation(notification, 'reject')"
+                >
+                  Rechazar
+                </Button>
+              </div>
+              <p
+                v-else-if="notification.type === 'judge_invitation' && responded[notification.id]"
+                class="text-xs font-medium"
+                :class="responded[notification.id] === 'accepted' ? 'text-emerald-600' : 'text-muted-foreground'"
+              >
+                {{ responded[notification.id] === 'accepted' ? 'Aceptada' : 'Rechazada' }}
+              </p>
+
               <p class="text-xs text-muted-foreground">{{ formatDate(notification.created_at) }}</p>
             </div>
             <div v-if="!notification.read" class="absolute end-0 top-1 self-start">

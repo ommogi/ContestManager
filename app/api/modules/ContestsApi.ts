@@ -1,5 +1,5 @@
 import { ApiService } from '../apiService'
-import type { Database, ContestFormPayload } from '~~/types'
+import type { Database, ContestFormPayload, PaginatedResponse } from '~~/types'
 
 type Contest = Database['public']['Tables']['contests']['Row']
 
@@ -18,7 +18,8 @@ export class ContestsApi extends ApiService {
    * Obtiene la lista base de concursos (Placeholder estructurado).
    */
   async fetchContests(): Promise<Contest[]> {
-    return this.get<Contest[]>('/api/contests')
+    const res = await this.get<PaginatedResponse<Contest>>('/api/contests')
+    return res.items
   }
 
   /**

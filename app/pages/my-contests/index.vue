@@ -18,7 +18,7 @@ const { data, error } = await useFetch('/api/my/contests', {
 const contests = computed(() => (data.value as any)?.contests ?? [])
 
 function statusLabel(status: string) {
-  const map: Record<string, string> = { draft: 'Borrador', active: 'Activo', finished: 'Finalizado', cancelled: 'Cancelado' }
+  const map: Record<string, string> = { draft: 'No empezado', active: 'Activo', finished: 'Finalizado', cancelled: 'Cancelado' }
   return map[status] ?? status
 }
 
@@ -95,7 +95,7 @@ function roleCount(myCategories: any[], role: string) {
           <div class="flex items-center justify-between text-sm text-white/70">
             <div class="flex items-center gap-1.5">
               <CalendarClock class="w-4 h-4" />
-              <span>{{ new Date(entry.contest.created_at).toLocaleDateString('es-ES') }}</span>
+              <span>{{ entry.contest.starts_at ? new Date(entry.contest.starts_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : '—' }}</span>
             </div>
             <div class="flex items-center gap-1.5">
               <Users class="w-4 h-4" />

@@ -4,7 +4,7 @@ import { reactiveOmit } from "@vueuse/core"
 import { CircleCheckIcon, InfoIcon, Loader2Icon, OctagonXIcon, TriangleAlertIcon, XIcon } from "lucide-vue-next"
 import { Toaster as Sonner } from "vue-sonner"
 
-const props = defineProps<ToasterProps>()
+const props = defineProps</* @vue-ignore */ ToasterProps>()
 const delegatedProps = reactiveOmit(props, "toastOptions")
 </script>
 

@@ -48,7 +48,7 @@ async function loadData() {
       contests.value = cs || []
     }
     dataLoaded.value = true
-  } catch {}
+  } catch (e) { console.error('[command-palette] load failed:', e) }
 }
 
 // ── Static nav items ────────────────────────────────────────────────
@@ -66,7 +66,10 @@ const navItems = computed(() => {
       { id: 'nav:new-contest', icon: Sparkles, label: 'Nuevo concurso', sub: 'Crear concurso', to: '/contests/new', group: 'Acciones' },
     )
   } else if (profile.value) {
-    items.push({ id: 'nav:my-contests', icon: Trophy, label: 'Mis Concursos', sub: 'Mis participaciones', to: '/my-contests', group: 'Navegación' })
+    items.push(
+      { id: 'nav:my-contests', icon: Trophy, label: 'Mis Concursos', sub: 'Mis participaciones', to: '/my-contests', group: 'Navegación' },
+      { id: 'nav:my-calendar', icon: CalendarIcon, label: 'Mi Calendario', sub: 'Ensayos y actuaciones', to: '/my-calendar', group: 'Navegación' }
+    )
   }
   return items
 })

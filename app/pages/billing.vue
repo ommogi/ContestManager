@@ -164,21 +164,20 @@ async function pollBalanceUntilChange(prevTicket: number, prevActiv: number, max
         toast.success('Saldo actualizado')
         return
       }
-    } catch {}
+    } catch (e) { console.error('[billing] poll balance failed:', e) }
   }
 }
 
 const euro = (cents: number) => `${(cents / 100).toFixed(0)}€`
 
-// Price breakdown: subtract activation value, show real ticket cost
 const planBreakdown = (p: Plan) => {
   const totalEur = p.price_cents / 100
-  const activationPortion = p.activations * ACTIVATION_UNIT_EUR
-  const ticketPortion = totalEur - activationPortion
-  const perTicket = (ticketPortion / p.tickets).toFixed(2)
-  const unitValue = (p.tickets * TICKET_UNIT_EUR) + (p.activations * ACTIVATION_UNIT_EUR)
+  const unitValue = p.tickets * TICKET_UNIT_EUR + p.activations * ACTIVATION_UNIT_EUR
+  const ratio = totalEur / unitValue
+  const perTicket = (TICKET_UNIT_EUR * ratio).toFixed(2)
+  const perActivation = (ACTIVATION_UNIT_EUR * ratio).toFixed(0)
   const savings = unitValue - totalEur
-  return { totalEur, activationPortion, ticketPortion, perTicket, unitValue, savings }
+  return { totalEur, perTicket, perActivation, unitValue, savings }
 }
 
 const PLAN_META: Record<string, { label: string; accent: string; highlight?: boolean }> = {
@@ -415,7 +414,7 @@ onMounted(async () => {
                 </div>
                 <div class="flex justify-between">
                   <span>{{ p.activations }} activaciones</span>
-                  <span class="tabular-nums">{{ ACTIVATION_UNIT_EUR }} €/ud</span>
+                  <span class="tabular-nums">{{ planBreakdown(p).perActivation }} €/ud</span>
                 </div>
                 <Separator class="my-1" />
                 <div class="flex justify-between font-semibold text-emerald-600 dark:text-emerald-400">
@@ -483,9 +482,9 @@ onMounted(async () => {
                 </Button>
                 <input
                   v-model.number="ticketQty"
-                  type="number"
-                  min="1"
-                  max="500"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
                   class="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-center text-lg font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <Button
@@ -541,9 +540,9 @@ onMounted(async () => {
                 </Button>
                 <input
                   v-model.number="activationQty"
-                  type="number"
-                  min="1"
-                  max="50"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="[0-9]*"
                   class="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-center text-lg font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <Button

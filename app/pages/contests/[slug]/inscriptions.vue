@@ -72,7 +72,7 @@ async function onImported(count: number) {
   const cid = currentContest.value?.id
   if (cid) {
     participantsStore.invalidate(cid)
-    try { await participantsStore.fetch(cid) } catch {}
+    try { await participantsStore.fetch(cid) } catch (e) { console.error('[inscriptions] fetch failed:', e) }
   }
   fetchTicketBalance()
 }
@@ -170,7 +170,7 @@ async function refundParticipant(id: string) {
     const cid = currentContest.value?.id
     if (cid) {
       participantsStore.invalidate(cid)
-      try { await participantsStore.fetch(cid) } catch {}
+    try { await participantsStore.fetch(cid) } catch (e) { console.error('[inscriptions] fetch failed:', e) }
     }
   } catch (e: any) {
     toast.error(e?.statusMessage || e?.data?.statusMessage || 'Error al reembolsar')
@@ -468,7 +468,7 @@ const contestLocked = computed(() => ['active','finished','cancelled'].includes(
                     <AlertDialogHeader>
                       <AlertDialogTitle>Reembolsar inscripción</AlertDialogTitle>
                       <AlertDialogDescription>
-                        Se reembolsarán €{{ (p.amount_paid_cents/100).toFixed(2) }} a <strong>{{ p.name }}</strong> vía Stripe. La comisión de plataforma también se reembolsará proporcionalmente.
+                        Se reembolsarán €{{ (p.amount_paid_cents/100).toFixed(2) }} a <strong>{{ p.name || `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() }}</strong> vía Stripe. La comisión de plataforma también se reembolsará proporcionalmente.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -489,7 +489,7 @@ const contestLocked = computed(() => ['active','finished','cancelled'].includes(
                     <AlertDialogHeader>
                       <AlertDialogTitle>Eliminar inscripción</AlertDialogTitle>
                       <AlertDialogDescription>
-                        Se eliminará a <strong>{{ p.name }}</strong> del concurso. Acción irreversible.
+                        Se eliminará a <strong>{{ p.name || `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() }}</strong> del concurso. Acción irreversible.
                         <template v-if="p.payment_status === 'paid'">
                           <br /><span class="text-amber-600">Advertencia: esta inscripción está pagada. Considera reembolsar antes de eliminar.</span>
                         </template>
