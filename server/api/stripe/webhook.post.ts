@@ -1,116 +1,13 @@
 import { defineEventHandler, getHeader, readRawBody, createError, setResponseStatus } from 'h3'
 import { serverSupabaseAdmin } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
-import { sendEnrollmentEmail } from '~~/server/utils/email'
+import {
+  handleBundle,
+  handleTicketsTopup,
+  handleActivationsTopup,
+  handleEnrollment,
+} from '~~/server/services/stripe-webhook'
 import type Stripe from 'stripe'
-
-async function handleBundle(evt: Stripe.Event, session: Stripe.Checkout.Session) {
-  const orgId = session.metadata?.organization_id
-  const plan  = session.metadata?.plan
-  if (!orgId || !plan) return { ignored: 'missing_metadata' }
-  if (session.payment_status !== 'paid') return { ignored: `payment_status:${session.payment_status}` }
-
-  const admin = serverSupabaseAdmin()
-  const { error } = await admin.rpc('credit_bundle', {
-    p_org_id: orgId,
-    p_plan: plan,
-    p_stripe_session_id: session.id,
-    p_stripe_event_id: evt.id,
-  })
-  if (error) throw new Error(`credit_bundle: ${error.message}`)
-  return { credited: true }
-}
-
-async function handleTicketsTopup(evt: Stripe.Event, session: Stripe.Checkout.Session) {
-  const orgId = session.metadata?.organization_id
-  const qty = parseInt(session.metadata?.quantity || '0', 10)
-  if (!orgId || !qty || qty <= 0) return { ignored: 'missing_metadata' }
-  if (session.payment_status !== 'paid') return { ignored: `payment_status:${session.payment_status}` }
-
-  const admin = serverSupabaseAdmin()
-  const { error } = await admin.rpc('credit_tickets', {
-    p_org_id:            orgId,
-    p_quantity:          qty,
-    p_price_cents:       session.amount_total ?? 0,
-    p_stripe_session_id: session.id,
-    p_stripe_event_id:   evt.id,
-  })
-  if (error) throw new Error(`credit_tickets: ${error.message}`)
-  return { credited_tickets: qty }
-}
-
-async function handleActivationsTopup(evt: Stripe.Event, session: Stripe.Checkout.Session) {
-  const orgId = session.metadata?.organization_id
-  const qty = parseInt(session.metadata?.quantity || '0', 10)
-  if (!orgId || !qty || qty <= 0) return { ignored: 'missing_metadata' }
-  if (session.payment_status !== 'paid') return { ignored: `payment_status:${session.payment_status}` }
-
-  const admin = serverSupabaseAdmin()
-  const { error } = await admin.rpc('credit_activations', {
-    p_org_id:            orgId,
-    p_quantity:          qty,
-    p_price_cents:       session.amount_total ?? 0,
-    p_stripe_session_id: session.id,
-    p_stripe_event_id:   evt.id,
-  })
-  if (error) throw new Error(`credit_activations: ${error.message}`)
-  return { credited_activations: qty }
-}
-
-async function handleEnrollment(evt: Stripe.Event, session: Stripe.Checkout.Session) {
-  if (session.payment_status !== 'paid') return { ignored: `payment_status:${session.payment_status}` }
-
-  const m = session.metadata || {}
-  if (!m.token || !m.user_id || !m.category_id) return { ignored: 'missing_enrollment_metadata' }
-
-  const admin = serverSupabaseAdmin()
-  const paymentIntent =
-    typeof session.payment_intent === 'string'
-      ? session.payment_intent
-      : session.payment_intent?.id ?? null
-
-  const { data, error } = await admin.rpc('enroll_participant_paid', {
-    p_user_id:         m.user_id,
-    p_token:           m.token,
-    p_category_id:     m.category_id,
-    p_first_name:      m.first_name,
-    p_last_name:       m.last_name,
-    p_birthdate:       m.birthdate,
-    p_dni:             m.dni || null,
-    p_country:         m.country || null,
-    p_email:           m.email || null,
-    p_phone:           m.phone || null,
-    p_session_id:      session.id,
-    p_payment_intent:  paymentIntent,
-    p_amount_cents:    session.amount_total ?? 0,
-  })
-  if (error) throw new Error(`enroll_participant_paid: ${error.message}`)
-
-  // Fire-and-forget confirmation email
-  const recipient = m.email || session.customer_email || session.customer_details?.email
-  if (recipient) {
-    try {
-      const { data: ctx } = await admin
-        .from('participants')
-        .select('contests(name, slug), categories(name), first_name, amount_paid_cents')
-        .eq('id', data)
-        .single() as any
-      await sendEnrollmentEmail({
-        to: recipient,
-        first_name: ctx?.first_name ?? m.first_name ?? null,
-        contest_name: ctx?.contests?.name ?? 'Concurso',
-        category_name: ctx?.categories?.name ?? '',
-        amount_paid_cents: ctx?.amount_paid_cents ?? session.amount_total ?? null,
-        is_paid: true,
-        contest_slug: ctx?.contests?.slug ?? null,
-      })
-    } catch (e: any) {
-      console.error('[webhook] enrollment email failed:', e?.message)
-    }
-  }
-
-  return { participant_id: data }
-}
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
@@ -124,10 +21,23 @@ export default defineEventHandler(async (event) => {
   const stripe = getStripe()
   let evt: Stripe.Event
   try {
-    evt = stripe.webhooks.constructEvent(raw as any, sig, secret)
+    evt = stripe.webhooks.constructEvent(raw, sig, secret)
   } catch (err: any) {
     console.error('[stripe webhook] sig verify failed:', err?.message)
-    throw createError({ statusCode: 400, statusMessage: `invalid_signature: ${err?.message}` })
+    throw createError({ statusCode: 400, statusMessage: 'invalid_signature' })
+  }
+
+  // Idempotency: guard against duplicate event processing
+  const admin = serverSupabaseAdmin()
+  const { data: existingEvent } = await admin
+    .from('processed_stripe_events')
+    .select('stripe_event_id')
+    .eq('stripe_event_id', evt.id)
+    .maybeSingle()
+
+  if (existingEvent) {
+    setResponseStatus(event, 200)
+    return { received: true, ignored: 'already_processed' }
   }
 
   // Account onboarding status sync (Connect)
@@ -177,31 +87,52 @@ export default defineEventHandler(async (event) => {
     return { received: true }
   }
 
+  // ─── Atomic idempotency: mark event as processing BEFORE handler ───────────
+  // If insert succeeds, we own this event. If handler fails, we delete the row
+  // so Stripe can retry. If insert fails with 23505, event already processed.
+  let eventMarked = false
+  try {
+    await admin.from('processed_stripe_events').insert({
+      stripe_event_id: evt.id,
+      event_type: evt.type,
+    })
+    eventMarked = true
+  } catch (e: any) {
+    if (e?.code === '23505') {
+      setResponseStatus(event, 200)
+      return { received: true, ignored: 'already_processed' }
+    }
+    console.error('[stripe webhook] failed to mark event processing:', e?.message)
+    throw createError({ statusCode: 500, statusMessage: 'idempotency_lock_failed' })
+  }
+
+  let handlerResult: Record<string, any> = { received: true }
+
   if (evt.type === 'checkout.session.completed') {
     const session = evt.data.object as Stripe.Checkout.Session
     const type = session.metadata?.type
 
     try {
       if (type === 'enrollment') {
-        const r = await handleEnrollment(evt, session)
-        return { received: true, ...r }
+        handlerResult = { received: true, ...(await handleEnrollment(admin, evt, session)) }
+      } else if (type === 'tickets') {
+        handlerResult = { received: true, ...(await handleTicketsTopup(admin, evt, session)) }
+      } else if (type === 'activations') {
+        handlerResult = { received: true, ...(await handleActivationsTopup(admin, evt, session)) }
+      } else {
+        // Default (bundle purchase — metadata has plan)
+        handlerResult = { received: true, ...(await handleBundle(admin, evt, session)) }
       }
-      if (type === 'tickets') {
-        const r = await handleTicketsTopup(evt, session)
-        return { received: true, ...r }
-      }
-      if (type === 'activations') {
-        const r = await handleActivationsTopup(evt, session)
-        return { received: true, ...r }
-      }
-      // Default (bundle purchase — metadata has plan)
-      const r = await handleBundle(evt, session)
-      return { received: true, ...r }
     } catch (err: any) {
       console.error('[stripe webhook] handler failed:', err?.message)
-      throw createError({ statusCode: 500, statusMessage: err?.message || 'handler_failed' })
+      // Rollback idempotency lock so Stripe can retry
+      if (eventMarked) {
+        await admin.from('processed_stripe_events').delete().eq('stripe_event_id', evt.id)
+          .catch((delErr: any) => console.error('[stripe webhook] rollback failed:', delErr?.message))
+      }
+      throw createError({ statusCode: 500, statusMessage: 'handler_failed' })
     }
   }
 
-  return { received: true }
+  return handlerResult
 })

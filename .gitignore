@@ -28,3 +28,7 @@ logs
 
 # Supabase CLI temp
 supabase/.temp/
+
+# VitePress build outputs
+docs/.vitepress/dist
+docs/.vitepress/cache

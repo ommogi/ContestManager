@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
-import { Plus, Users, Trash2, Mail, GraduationCap, Search, ChevronUp, ChevronDown, ArrowUpDown } from 'lucide-vue-next'
+import { Plus, Users, Trash2, Mail, GraduationCap, Search, ChevronUp, ChevronDown, ArrowUpDown, Clock, RotateCcw, X } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,22 +13,26 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { toast } from 'vue-sonner'
 import { useJudgePoolStore } from '~/stores/judge-pool'
 import { storeToRefs } from 'pinia'
 
 const store = useJudgePoolStore()
-const { items: judgePool, isFetching, total } = storeToRefs(store)
+const { items: judgePool, invitations, isFetching, total, pendingInvitations } = storeToRefs(store)
 
 await useAsyncData('judge-pool', () => store.fetchPool())
 
-const isAdding = ref(false)
+const isInviting = ref(false)
 const searchQuery = ref('')
 const isDialogOpen = ref(false)
 const sortField = ref<string>('full_name')
 const sortDirection = ref<'asc' | 'desc'>('asc')
 
-const newJudge = ref({ full_name: '', email: '', specialty: '' })
+const newJudge = ref({ email: '', full_name: '', specialty: '' })
 
 function toggleSort(field: string) {
   if (sortField.value === field) {
@@ -58,31 +62,60 @@ const filteredJudges = computed(() => {
   })
 })
 
-async function handleAddJudge() {
-  if (!newJudge.value.full_name || !newJudge.value.email) {
-    toast.error('Por favor, completa los campos obligatorios')
+async function handleInviteJudge() {
+  if (!newJudge.value.email) {
+    toast.error('Introduce el correo electrónico')
     return
   }
-  isAdding.value = true
+  isInviting.value = true
   try {
-    await store.addJudge(newJudge.value)
-    toast.success('Jurado añadido con éxito')
-    newJudge.value = { full_name: '', email: '', specialty: '' }
+    await store.inviteJudge(newJudge.value)
+    toast.success('Invitación enviada con éxito')
+    newJudge.value = { email: '', full_name: '', specialty: '' }
     isDialogOpen.value = false
   } catch (e: any) {
-    toast.error(e?.data?.statusMessage || 'Hubo un error al añadir al jurado')
+    toast.error(e?.data?.statusMessage || 'Hubo un error al enviar la invitación')
   } finally {
-    isAdding.value = false
+    isInviting.value = false
   }
 }
 
-async function handleDeleteJudge(id: string) {
-  if (!confirm('¿Estás seguro de que quieres eliminar a este jurado del pool?')) return
+const showDeleteJudgeDialog = ref(false)
+const deletingJudgeId = ref<string | null>(null)
+
+function requestDeleteJudge(id: string) {
+  deletingJudgeId.value = id
+  showDeleteJudgeDialog.value = true
+}
+
+async function confirmDeleteJudge() {
+  if (!deletingJudgeId.value) return
+  showDeleteJudgeDialog.value = false
   try {
-    await store.removeJudge(id)
+    await store.removeJudge(deletingJudgeId.value)
     toast.success('Jurado eliminado correctamente')
   } catch (e: any) {
     toast.error(e?.data?.statusMessage || 'No se pudo eliminar al jurado')
+  } finally {
+    deletingJudgeId.value = null
+  }
+}
+
+async function handleResendInvitation(invitationId: string) {
+  try {
+    await store.resendInvitation(invitationId)
+    toast.success('Invitación reenviada')
+  } catch (e: any) {
+    toast.error(e?.data?.statusMessage || 'No se pudo reenviar la invitación')
+  }
+}
+
+async function handleCancelInvitation(invitationId: string) {
+  try {
+    await store.cancelInvitation(invitationId)
+    toast.success('Invitación cancelada')
+  } catch (e: any) {
+    toast.error(e?.data?.statusMessage || 'No se pudo cancelar la invitación')
   }
 }
 </script>
@@ -100,7 +133,9 @@ async function handleDeleteJudge(id: string) {
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <CardTitle>Miembros del Pool</CardTitle>
-            <CardDescription>Tienes {{ total }} jueces registrados actualmente.</CardDescription>
+            <CardDescription>
+              {{ total }} confirmados · {{ pendingInvitations.length }} invitación{{ pendingInvitations.length === 1 ? '' : 'es' }} pendiente{{ pendingInvitations.length === 1 ? '' : 's' }}
+            </CardDescription>
           </div>
           <div class="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
             <div class="relative w-full sm:w-64">
@@ -117,22 +152,22 @@ async function handleDeleteJudge(id: string) {
               <DialogTrigger as-child>
                 <Button size="sm" class="gap-2 bg-card text-foreground border-border border-2 rounded-md transition-all font-bold uppercase tracking-tight text-[10px] px-6 shadow-sm hover:bg-muted">
                   <Plus class="w-4 h-4" />
-                  Nuevo Jurado
+                  Invitar Jurado
                 </Button>
               </DialogTrigger>
               <DialogContent class="sm:max-w-[425px]">
                 <DialogHeader>
-                  <DialogTitle>Añadir Nuevo Jurado</DialogTitle>
-                  <DialogDescription>Introduce los datos del juez para añadirlo al pool de tu organización.</DialogDescription>
+                  <DialogTitle>Invitar Jurado</DialogTitle>
+                  <DialogDescription>Introduce los datos. El jurado recibirá una invitación por correo para aceptar o rechazar.</DialogDescription>
                 </DialogHeader>
                 <div class="grid gap-6 py-4">
                   <div class="space-y-2">
-                    <Label for="name" class="text-sm font-bold">Nombre Completo</Label>
-                    <Input id="name" v-model="newJudge.full_name" placeholder="Ej. Juan Pérez" />
-                  </div>
-                  <div class="space-y-2">
                     <Label for="email" class="text-sm font-bold">Correo Electrónico</Label>
                     <Input id="email" type="email" v-model="newJudge.email" placeholder="juan@ejemplo.com" />
+                  </div>
+                  <div class="space-y-2">
+                    <Label for="full_name" class="text-sm font-bold">Nombre <span class="text-zinc-400 font-normal text-xs">(opcional)</span></Label>
+                    <Input id="full_name" v-model="newJudge.full_name" placeholder="Juan Pérez" />
                   </div>
                   <div class="space-y-2">
                     <Label for="specialty" class="text-sm font-bold">Especialidad <span class="text-zinc-400 font-normal text-xs">(opcional)</span></Label>
@@ -141,8 +176,8 @@ async function handleDeleteJudge(id: string) {
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" @click="isDialogOpen = false">Cancelar</Button>
-                  <Button :disabled="isAdding" @click="handleAddJudge">
-                    {{ isAdding ? 'Añadiendo...' : 'Añadir Jurado' }}
+                  <Button :disabled="isInviting" @click="handleInviteJudge">
+                    {{ isInviting ? 'Enviando...' : 'Enviar Invitación' }}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -157,21 +192,100 @@ async function handleDeleteJudge(id: string) {
           <p class="text-muted-foreground animate-pulse">Cargando jurados...</p>
         </div>
 
-        <div v-else-if="filteredJudges.length === 0" class="p-12 text-center space-y-4">
+        <div v-else-if="filteredJudges.length === 0 && pendingInvitations.length === 0" class="p-12 text-center space-y-4">
           <div class="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto text-muted-foreground border-2 border-dashed">
             <Users class="w-8 h-8" />
           </div>
           <div>
             <h3 class="text-lg font-semibold">No se encontraron jurados</h3>
-            <p class="text-muted-foreground">Comienza añadiendo tu primer jurado al pool para usarlo en tus concursos.</p>
+            <p class="text-muted-foreground">Comienza invitando a tu primer jurado al pool para usarlo en tus concursos.</p>
           </div>
           <Button size="sm" @click="isDialogOpen = true" class="mt-2 gap-2 bg-card text-foreground border-border border-2 rounded-md font-bold uppercase tracking-tight text-[10px] px-6 shadow-sm hover:bg-muted">
             <Plus class="w-4 h-4" />
-            Añadir mi primer jurado
+            Invitar mi primer jurado
           </Button>
         </div>
 
-        <Table v-else>
+        <!-- Pending invitations section -->
+        <div v-if="pendingInvitations.length > 0" class="border-b border-zinc-200 dark:border-zinc-800">
+          <div class="px-6 py-3 bg-amber-50/50 dark:bg-amber-950/20 border-b border-zinc-100 dark:border-zinc-900">
+            <h3 class="text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400 flex items-center gap-2">
+              <Clock class="w-3.5 h-3.5" />
+              Invitaciones Pendientes
+            </h3>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow class="!bg-muted/30 hover:!bg-muted/30 border-b border-zinc-200 dark:border-zinc-800">
+                <TableHead class="px-6 text-zinc-900 dark:text-zinc-100 font-bold uppercase tracking-tighter text-[11px]">Nombre</TableHead>
+                <TableHead class="px-6 text-zinc-900 dark:text-zinc-100 font-bold uppercase tracking-tighter text-[11px]">Email</TableHead>
+                <TableHead class="px-6 text-zinc-900 dark:text-zinc-100 font-bold uppercase tracking-tighter text-[11px]">Especialidad</TableHead>
+                <TableHead class="px-6 text-zinc-900 dark:text-zinc-100 font-bold uppercase tracking-tighter text-[11px]">Estado</TableHead>
+                <TableHead class="text-right px-6 text-zinc-900 dark:text-zinc-100 font-bold uppercase tracking-tighter text-[11px]">Acciones</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow
+                v-for="inv in pendingInvitations"
+                :key="inv.id"
+                class="group transition-colors border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+              >
+                <TableCell class="font-medium px-6 py-4">
+                  <div class="flex items-center gap-3">
+                    <AvatarBubble
+                      :name="inv.full_name || '??'"
+                      :avatar-url="null"
+                      size="w-9 h-9"
+                      text-size="text-xs"
+                    />
+                    <span>{{ inv.full_name || '—' }}</span>
+                  </div>
+                </TableCell>
+                <TableCell class="px-6">
+                  <div class="flex items-center gap-2 text-muted-foreground">
+                    <Mail class="w-4 h-4 shrink-0" />
+                    {{ inv.email || '—' }}
+                  </div>
+                </TableCell>
+                <TableCell class="px-6">
+                  <span v-if="inv.specialty" class="text-sm border px-2 py-0.5 rounded-full bg-zinc-50 dark:bg-zinc-900 font-medium">{{ inv.specialty }}</span>
+                  <span v-else class="text-xs text-muted-foreground italic">No especificada</span>
+                </TableCell>
+                <TableCell class="px-6">
+                  <span class="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                    <Clock class="w-3 h-3" />
+                    Pendiente
+                  </span>
+                </TableCell>
+                <TableCell class="text-right px-6">
+                  <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="text-zinc-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/20 transition-all"
+                      title="Reenviar invitación"
+                      @click="handleResendInvitation(inv.id)"
+                    >
+                      <RotateCcw class="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all"
+                      title="Cancelar invitación"
+                      @click="handleCancelInvitation(inv.id)"
+                    >
+                      <X class="w-4 h-4" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        <!-- Confirmed judges section -->
+        <Table v-if="filteredJudges.length > 0">
           <TableHeader>
             <TableRow class="!bg-muted/50 hover:!bg-muted/50 border-b border-zinc-200 dark:border-zinc-800">
               <TableHead class="w-[300px] px-6 text-zinc-900 dark:text-zinc-100 font-bold uppercase tracking-tighter text-[11px] cursor-pointer" @click="toggleSort('full_name')">
@@ -230,7 +344,7 @@ async function handleDeleteJudge(id: string) {
                   variant="ghost"
                   size="icon"
                   class="text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-all opacity-0 group-hover:opacity-100"
-                  @click="handleDeleteJudge(judge.id)"
+                  @click="requestDeleteJudge(judge.id)"
                 >
                   <Trash2 class="w-4 h-4" />
                 </Button>
@@ -240,5 +354,21 @@ async function handleDeleteJudge(id: string) {
         </Table>
       </CardContent>
     </Card>
+
+    <!-- Delete judge dialog -->
+    <AlertDialog v-model:open="showDeleteJudgeDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Eliminar jurado</AlertDialogTitle>
+          <AlertDialogDescription>
+            ¿Estás seguro de que quieres eliminar a este jurado del pool? Esta acción no se puede deshacer.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction @click="confirmDeleteJudge">Eliminar</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

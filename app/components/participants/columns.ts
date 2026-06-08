@@ -1,4 +1,4 @@
-import { h, resolveComponent } from 'vue'
+import { h } from 'vue'
 import type { ColumnDef } from '@tanstack/vue-table'
 import type { Participant } from '~~/types'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -44,17 +44,16 @@ export const createColumns = (onDelete: (id: string) => void): ColumnDef<Partici
     cell: ({ row }) => {
       const uid = (row.original as any).user_id
       const inner = h(AvatarCell, {
-        name: row.getValue('name') as string,
+        name: (row.getValue('name') as string | null | undefined) || `${(row.original as any).first_name || ''} ${(row.original as any).last_name || ''}`.trim() || '—',
         email: row.original.email,
         avatarUrl: (row.original as any).avatar_url ?? null,
       })
       if (!uid) return inner
-      const NuxtLink = resolveComponent('NuxtLink') as any
-      return h(NuxtLink, {
-        to: `/users/${uid}`,
+      return h('a', {
+        href: `/users/${uid}`,
         class: 'block hover:opacity-80 transition-opacity',
         onClick: (e: MouseEvent) => e.stopPropagation(),
-      }, () => inner)
+      }, [inner])
     },
     enableSorting: true,
   },

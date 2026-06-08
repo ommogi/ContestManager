@@ -20,7 +20,7 @@ const { data, pending, error } = await useFetch<{
     starts_at: string | null; ends_at: string | null
     registration_open: boolean; registration_token: string
     entry_fee_cents: number; org_name: string; org_slug: string
-    org_charges_enabled: boolean; settings: Record<string, unknown> | null
+    org_charges_enabled: boolean; rules: string | null; settings: Record<string, unknown> | null
   }
   categories: Array<{
     id: string; name: string; description: string | null; status: string
@@ -31,10 +31,10 @@ const { data, pending, error } = await useFetch<{
 
 const contest = computed(() => data.value?.contest)
 const categories = computed(() => data.value?.categories ?? [])
-const hasRules = computed(() => !!(contest.value?.settings as any)?.rules)
+const hasRules = computed(() => !!contest.value?.rules)
 
 const parsedDescription = computed(() => marked.parse(contest.value?.description || '') as string)
-const parsedRules = computed(() => marked.parse((contest.value?.settings as any)?.rules || '') as string)
+const parsedRules = computed(() => marked.parse(contest.value?.rules || '') as string)
 
 const joinHref = computed(() =>
   contest.value ? `/join/${contest.value.registration_token}` : '#'
@@ -135,7 +135,7 @@ function fmtDate(iso: string | null) {
 
             <TabsContent value="reglamento" class="mt-4">
               <div
-                v-if="(contest.settings as any)?.rules"
+                v-if="contest.rules"
                 class="rich-content text-sm prose prose-sm max-w-none"
                 v-html="parsedRules"
               />

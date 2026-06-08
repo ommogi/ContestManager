@@ -6,6 +6,13 @@ export type Json =
   | { [key: string]: any }
   | any[]
 
+export interface PaginatedResponse<T> {
+  items: T[]
+  page: number
+  limit: number
+  total: number
+}
+
 // ─── Auth / Profile ──────────────────────────────────────────────────────────
 
 export type AccountType = 'org_owner' | 'user'
@@ -37,6 +44,12 @@ export interface Database {
           logo_url: string | null
           contact_phone: string | null
           contact_country: string | null
+          ticket_balance: number
+          activation_balance: number
+          stripe_account_id: string | null
+          stripe_onboarding_done: boolean
+          stripe_charges_enabled: boolean
+          stripe_payouts_enabled: boolean
           settings: Json | null
           created_at: string
           updated_at: string
@@ -56,6 +69,10 @@ export interface Database {
           is_rounds_dynamic: boolean
           starts_at: string | null
           ends_at: string | null
+          registration_token: string | null
+          registration_open: boolean
+          entry_fee_cents: number | null
+          rules: string | null
           settings: Json | null
           cover_image_url: string | null
           created_at: string
@@ -111,6 +128,7 @@ export interface Database {
           status: 'pending' | 'active' | 'closed'
           min_age: number | null
           max_age: number | null
+          max_participants: number | null
           tier: string | null
           artistic_type: string | null
           speciality: string | null
@@ -156,6 +174,13 @@ export interface Database {
           email: string | null
           metadata: Json | null
           status: 'active' | 'eliminated'
+          amount_paid_cents: number | null
+          amount_refunded_cents: number | null
+          payment_status: 'free' | 'pending' | 'paid' | 'refunded' | 'partial_refund'
+          stripe_payment_intent_id: string | null
+          stripe_checkout_session_id: string | null
+          stripe_refund_id: string | null
+          refunded_at: string | null
           created_at: string
           updated_at: string
         }
@@ -171,6 +196,10 @@ export interface Database {
           is_qualified: boolean | null
           scheduled_at: string | null
           location: string | null
+          final_score_override: number | null
+          final_score_override_by: string | null
+          final_score_override_at: string | null
+          final_score_override_notes: string | null
           created_at: string
           updated_at: string
         }
@@ -201,6 +230,8 @@ export interface Database {
           criteria_scores: Json | null
           notes: string | null
           submitted_at: string
+          set_by_admin: boolean
+          admin_user_id: string | null
           created_at: string
           updated_at: string
         }

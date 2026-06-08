@@ -1,5 +1,6 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { sendWelcomeEmail } from '../../utils/email'
+import { requireAuth } from '../../utils/supabase'
 import { z } from 'zod'
 
 const welcomeEmailSchema = z.object({
@@ -9,23 +10,22 @@ const welcomeEmailSchema = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  console.log('📧 [welcome] ========== Endpoint called ==========')
-  console.log('[welcome] Request body:', JSON.stringify(await readBody(event), null, 2))
+  const user = requireAuth(event)
   try {
     const body = await readBody(event)
-    console.log('[welcome] Body parsed:', body)
     const validated = welcomeEmailSchema.parse(body)
-    console.log('[welcome] Validated:', validated)
+
+    // Only allow sending welcome email to the authenticated user's own email
+    if (validated.email !== user.email) {
+      throw createError({ statusCode: 403, statusMessage: 'Can only send welcome email to your own address' })
+    }
 
     const emailResult = await sendWelcomeEmail({
       to: validated.email,
-      first_name: validated.first_name,
+      first_name: validated.first_name ?? null,
       email: validated.email,
       marketing_consent: validated.marketing_consent,
     })
-    
-    console.log('📧 [welcome] Email result:', emailResult)
-    console.log('📧 [welcome] ========== Done ==========')
 
     return {
       success: true,
@@ -33,12 +33,11 @@ export default defineEventHandler(async (event) => {
       result: emailResult,
     }
   } catch (error: any) {
-    console.error('❌ [welcome] Error:', error)
     if (error instanceof z.ZodError) {
       throw createError({
         statusCode: 400,
         message: 'Invalid payload',
-        data: error.errors,
+        data: error.issues,
       })
     }
     throw error

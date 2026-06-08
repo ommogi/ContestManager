@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
   if (rErr) throw createError({ statusCode: 500, statusMessage: rErr.message })
   if (rounds && rounds.length > 0) {
     throw createError({
-      statusCode: 403,
+      statusCode: 409,
       statusMessage: 'No puedes cancelar: las rondas ya han comenzado.',
     })
   }
@@ -50,7 +50,9 @@ export default defineEventHandler(async (event) => {
           amount: remaining,
           reverse_transfer: true,
           refund_application_fee: true,
-        } as any)
+        } as any, {
+          idempotencyKey: `cancel:${p.id}:${remaining}`,
+        })
         refundInfo = { refund_id: refund.id, amount_cents: remaining }
       } catch (err: any) {
         throw createError({ statusCode: 400, statusMessage: `stripe_refund_failed: ${err?.message}` })
@@ -60,7 +62,10 @@ export default defineEventHandler(async (event) => {
 
   // Delete participant (trigger notifies org owner)
   const { error: dErr } = await admin.from('participants').delete().eq('id', id)
-  if (dErr) throw createError({ statusCode: 500, statusMessage: dErr.message })
+  if (dErr) {
+    console.error('[cancel] delete failed after refund:', dErr.message, 'participant:', id)
+    throw createError({ statusCode: 500, statusMessage: 'cancel_partial: participant could not be deleted after refund' })
+  }
 
   return { cancelled: true, refund: refundInfo }
 })

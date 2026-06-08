@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
+import { RefundBodySchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const { org } = await requireOrgOwner(event)
@@ -8,7 +9,12 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing participant id' })
 
-  const body = await readBody<{ amount_cents?: number; reverse_transfer?: boolean }>(event) || {}
+  const rawBody = await readBody(event) || {}
+  const parsed = RefundBodySchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
+  }
+  const body = parsed.data
 
   const admin = serverSupabaseAdmin()
 
@@ -53,9 +59,11 @@ export default defineEventHandler(async (event) => {
     refund = await stripe.refunds.create({
       payment_intent: participant.stripe_payment_intent_id,
       amount,
-      reverse_transfer: body.reverse_transfer !== false, // default true: claw back from connected acct
-      refund_application_fee: body.reverse_transfer !== false, // also refund platform fee proportionally
-    } as any)
+      reverse_transfer: body.reverse_transfer,
+      refund_application_fee: body.reverse_transfer,
+    }, {
+      idempotencyKey: `refund:${participant.id}:${remaining}:${amount}`,
+    })
   } catch (err: any) {
     throw createError({ statusCode: 400, statusMessage: `stripe_refund_failed: ${err?.message}` })
   }

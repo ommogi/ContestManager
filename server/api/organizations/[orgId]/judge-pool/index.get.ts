@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
 
   const { data, error } = await client.rpc('get_judge_pool', { p_org_id: organizationId })
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
   return data || []
 })

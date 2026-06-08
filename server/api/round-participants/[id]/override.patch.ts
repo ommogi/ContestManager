@@ -1,18 +1,41 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
-  const client = serverSupabaseAdmin()
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing ID' })
 
-  const body = await readBody(event)
-  const { final_score_override, final_score_override_notes, admin_user_id, admin_user_name } = body
+  const admin = serverSupabaseAdmin()
 
-  if (!admin_user_id) throw createError({ statusCode: 400, statusMessage: 'admin_user_id required' })
+  // Resolve contest_id for auth gate
+  const { data: rp } = await admin
+    .from('round_participants')
+    .select('round_id')
+    .eq('id', id)
+    .maybeSingle()
+  if (!rp) throw createError({ statusCode: 404, statusMessage: 'round_participant_not_found' })
+
+  const { data: round } = await admin
+    .from('rounds')
+    .select('category_id')
+    .eq('id', rp.round_id)
+    .maybeSingle()
+  if (!round) throw createError({ statusCode: 404, statusMessage: 'round_not_found' })
+
+  const { data: category } = await admin
+    .from('categories')
+    .select('contest_id')
+    .eq('id', round.category_id)
+    .maybeSingle()
+  if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
+  await requireOrgOwnerOrMember(event, category.contest_id)
+
+  const user = event.context.user as { id: string; email?: string } | undefined
+  const body = await readBody(event)
+  const { final_score_override, final_score_override_notes } = body
 
   // Read existing for audit
-  const { data: existing } = await client
+  const { data: existing } = await admin
     .from('round_participants')
     .select('final_score_override, round_id, participant_id')
     .eq('id', id)
@@ -22,11 +45,11 @@ export default defineEventHandler(async (event) => {
 
   const isRemoving = final_score_override === null || final_score_override === undefined
 
-  const { data, error } = await client
+  const { data, error } = await admin
     .from('round_participants')
     .update({
       final_score_override: isRemoving ? null : Number(final_score_override),
-      final_score_override_by: isRemoving ? null : admin_user_id,
+      final_score_override_by: isRemoving ? null : user?.id ?? null,
       final_score_override_at: isRemoving ? null : new Date().toISOString(),
       final_score_override_notes: isRemoving ? null : (final_score_override_notes ?? null),
     })
@@ -34,15 +57,15 @@ export default defineEventHandler(async (event) => {
     .select()
     .single()
 
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
   // Audit log
-  await client.from('score_audit_logs').insert({
+  await admin.from('score_audit_logs').insert({
     round_id: existing.round_id,
     participant_id: existing.participant_id,
     judge_id: null,
-    changed_by: admin_user_id,
-    changed_by_name: admin_user_name ?? null,
+    changed_by: user?.id ?? null,
+    changed_by_name: user?.email ?? null,
     action: isRemoving ? 'override_removed' : 'override_set',
     old_value: existing.final_score_override ? Number(existing.final_score_override) : null,
     new_value: isRemoving ? null : Number(final_score_override),

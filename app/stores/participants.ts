@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Participant } from '~~/types'
+import type { Participant, PaginatedResponse } from '~~/types'
 import { apiClient } from '~/api/apiClient'
 
 export const useParticipantsStore = defineStore('participants', () => {
@@ -30,8 +30,8 @@ export const useParticipantsStore = defineStore('participants', () => {
 
   async function fetch(contestId: string): Promise<Participant[]> {
     if (fetched.value.has(contestId)) return byContest(contestId)
-    const data = await apiClient<Participant[]>(`/api/contests/${contestId}/participants`)
-    _merge(data || [])
+    const data = await apiClient<PaginatedResponse<Participant>>(`/api/contests/${contestId}/participants`)
+    _merge(data?.items || [])
     fetched.value.add(contestId)
     return byContest(contestId)
   }

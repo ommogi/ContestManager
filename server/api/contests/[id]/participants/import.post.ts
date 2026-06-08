@@ -1,16 +1,6 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseUser, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
-
-interface Row {
-  category_id: string
-  first_name: string
-  last_name: string
-  birthdate: string
-  dni?: string | null
-  country?: string | null
-  email?: string | null
-  phone?: string | null
-}
+import { serverSupabaseUser, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { ImportBodySchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
@@ -19,24 +9,16 @@ export default defineEventHandler(async (event) => {
   // Auth gate — require org owner or contest member
   await requireOrgOwnerOrMember(event, contestId)
 
-  const body = await readBody<{ rows: Row[] }>(event)
-  const rows = body?.rows ?? []
-  if (!Array.isArray(rows) || rows.length === 0) {
-    throw createError({ statusCode: 400, statusMessage: 'No rows' })
-  }
-
-  // Quick validation
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]
-    if (!r.category_id || !r.first_name || !r.last_name || !r.birthdate) {
-      throw createError({ statusCode: 400, statusMessage: `Row ${i + 1}: missing required field` })
-    }
+  const rawBody = await readBody(event)
+  const parsed = ImportBodySchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
 
   const client = serverSupabaseUser(event)
   const { data, error } = await client.rpc('bulk_enroll_csv', {
     p_contest_id: contestId,
-    p_rows: rows,
+    p_rows: parsed.data.rows,
   })
   if (error) {
     const msg = (error.message || '').toLowerCase()

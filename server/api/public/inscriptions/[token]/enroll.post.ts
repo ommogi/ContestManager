@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseUser, serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { sendEnrollmentEmail } from '~~/server/utils/email'
+import { EnrollBodySchema } from '~~/server/utils/schemas'
 
 const ERROR_MESSAGES: Record<string, { status: number; message: string }> = {
   auth_required:       { status: 401, message: 'Debes iniciar sesión para inscribirte.' },
@@ -12,6 +13,7 @@ const ERROR_MESSAGES: Record<string, { status: number; message: string }> = {
   category_full:       { status: 400, message: 'La categoría está completa.' },
   insufficient_tickets:{ status: 402, message: 'La organización no tiene tickets disponibles.' },
   already_enrolled_in_category: { status: 409, message: 'Ya estás inscrito en esta categoría.' },
+  user_is_judge_in_contest:     { status: 409, message: 'Estás asignado como jurado en este concurso y no puedes inscribirte como participante.' },
   contest_active:      { status: 409, message: 'El concurso ya está en curso. Inscripciones cerradas.' },
 }
 
@@ -21,15 +23,16 @@ export default defineEventHandler(async (event) => {
   const token = getRouterParam(event, 'token')
   if (!token) throw createError({ statusCode: 400, statusMessage: 'Missing token' })
 
-  const body = await readBody(event)
-  const {
-    category_id, first_name, last_name, birthdate,
-    dni = null, country = null, email = null, phone = null
-  } = body || {}
-
-  if (!category_id || !first_name || !last_name || !birthdate) {
-    throw createError({ statusCode: 400, statusMessage: 'Faltan campos requeridos' })
+  const rawBody = await readBody(event)
+  const parsed = EnrollBodySchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
+  const { category_id, first_name, last_name, birthdate } = parsed.data
+  const dni = parsed.data.dni ?? null
+  const country = parsed.data.country ?? null
+  const email = parsed.data.email ?? null
+  const phone = parsed.data.phone ?? null
 
   const client = serverSupabaseUser(event)
   const effectiveEmail = email || user.email
@@ -55,6 +58,7 @@ export default defineEventHandler(async (event) => {
     for (const k of Object.keys(ERROR_MESSAGES)) {
       if (key.includes(k)) {
         const m = ERROR_MESSAGES[k]
+        if (!m) continue
         throw createError({ statusCode: m.status, statusMessage: m.message })
       }
     }

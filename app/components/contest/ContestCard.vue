@@ -28,6 +28,16 @@ const emit = defineEmits<{
 
 const isDeleteDialogOpen = ref(false)
 
+const statusLabel = (status: string) => {
+  const map: Record<string, string> = {
+    draft: 'Borrador',
+    active: 'Activo',
+    finished: 'Finalizado',
+    cancelled: 'Cancelado',
+  }
+  return map[status] ?? status
+}
+
 const getStatusColor = (status: string) => {
   switch(status) {
     case 'active': return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-300'
@@ -95,7 +105,7 @@ const getStatusColor = (status: string) => {
     <!-- Text content over gradient -->
     <div class="relative z-10 px-6 pt-4 pb-3 space-y-2 text-white">
       <Badge :class="getStatusColor(contest.status)" class="capitalize border-none shadow-none font-medium text-xs">
-        {{ contest.status }}
+        {{ statusLabel(contest.status) }}
       </Badge>
       <h3 class="text-xl font-bold leading-tight drop-shadow-md">{{ contest.name }}</h3>
     </div>
@@ -104,7 +114,7 @@ const getStatusColor = (status: string) => {
       <div class="flex items-center justify-between text-sm text-white/70">
         <div class="flex items-center gap-1.5">
           <CalendarClock class="w-4 h-4" />
-          <span>{{ new Date(contest.created_at).toLocaleDateString('es-ES') }}</span>
+          <span>{{ contest.starts_at ? new Date(contest.starts_at).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : '—' }}</span>
         </div>
         <div class="flex items-center gap-1.5">
           <Users class="w-4 h-4" />

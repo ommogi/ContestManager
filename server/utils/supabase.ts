@@ -2,21 +2,23 @@ import { createClient } from '@supabase/supabase-js'
 import type { H3Event } from 'h3'
 import { getHeader, createError } from 'h3'
 
+let _adminClient: ReturnType<typeof createClient> | null = null
+
 export const serverSupabaseAdmin = () => {
+  if (_adminClient) return _adminClient
   const url = process.env.SUPABASE_URL || ''
   const serviceKey = process.env.SUPABASE_SERVICE_KEY || ''
-  return createClient(url, serviceKey, {
+  _adminClient = createClient(url, serviceKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false
     }
   })
+  return _adminClient
 }
 
 export const serverSupabaseClient = (event: H3Event) => {
-  // Bypass RLS para desarrollo: usamos el service key siempre
-  // TODO: Phase 2 - switch to serverSupabaseUser(event) for defense-in-depth
-  return serverSupabaseAdmin()
+  return serverSupabaseUser(event)
 }
 
 /**
@@ -125,12 +127,26 @@ export async function requireOrgOwnerOrMember(
     return { user, org, member: null }
   }
 
-  // Check if contest member (by user_id or email)
+  // Check if accepted contest member (by user_id or email).
+  // Pending/rejected judges are NOT granted access.
+  const { data: memberById } = await admin
+    .from('contest_members')
+    .select('id, role')
+    .eq('contest_id', contestId)
+    .eq('user_id', user.id)
+    .eq('invitation_status', 'accepted')
+    .maybeSingle()
+
+  if (memberById) {
+    return { user, org: null, member: memberById }
+  }
+
   const { data: member } = await admin
     .from('contest_members')
     .select('id, role')
     .eq('contest_id', contestId)
-    .or(`user_id.eq.${user.id},email.eq.${user.email}`)
+    .eq('email', user.email)
+    .eq('invitation_status', 'accepted')
     .maybeSingle()
 
   if (member) {

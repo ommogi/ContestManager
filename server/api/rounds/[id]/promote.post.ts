@@ -1,23 +1,34 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseClient, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { sendPromotionEmail } from '~~/server/utils/email'
+import { PromoteBodySchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
-  const client = serverSupabaseClient(event)
   const admin = serverSupabaseAdmin()
   const roundId = getRouterParam(event, 'id')
-  const body = await readBody(event)
 
-  if (!roundId || !body.participantIds) throw createError({ statusCode: 400, statusMessage: 'Missing ID or participantIds' })
+  const rawBody = await readBody(event)
+  const parsed = PromoteBodySchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
+  }
+  const body = parsed.data
+
+  if (!roundId) throw createError({ statusCode: 400, statusMessage: 'Missing round ID' })
 
   // 1. Get current round info
-  const { data: currentRound, error: roundError } = await client
+  const { data: currentRound, error: roundError } = await admin
     .from('rounds')
     .select('*')
     .eq('id', roundId)
     .single()
 
   if (roundError || !currentRound) throw createError({ statusCode: 404, statusMessage: 'Round not found' })
+
+  // Guard against double-promotion (race condition / retry)
+  if (currentRound.status === 'closed') {
+    throw createError({ statusCode: 409, statusMessage: 'round_already_closed' })
+  }
 
   // Auth gate: must be org owner or contest member
   // Resolve contest_id from category to check ownership
@@ -29,34 +40,40 @@ export default defineEventHandler(async (event) => {
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
   await requireOrgOwnerOrMember(event, category.contest_id)
 
-  // 2. Get all round_participants to determine who is not promoted
-  const { data: allRoundParts } = await client
+  // Validate participantIds belong to this round
+  const { data: allRoundParts } = await admin
     .from('round_participants')
     .select('participant_id')
     .eq('round_id', roundId)
+
+  const validIds = new Set((allRoundParts ?? []).map((rp: any) => rp.participant_id))
+  const invalid = body.participantIds.filter((pid: string) => !validIds.has(pid))
+  if (invalid.length > 0) {
+    throw createError({ statusCode: 400, statusMessage: 'invalid_participant_ids' })
+  }
 
   const allPartIds = (allRoundParts ?? []).map((rp: any) => rp.participant_id)
   const notPromotedIds = allPartIds.filter((pid: string) => !body.participantIds.includes(pid))
 
   // Close current round
-  await client.from('rounds').update({ status: 'closed' }).eq('id', roundId)
+  await admin.from('rounds').update({ status: 'closed' }).eq('id', roundId)
 
   // Mark promoted participants as qualified
-  await client.from('round_participants')
+  await admin.from('round_participants')
     .update({ is_qualified: true })
     .eq('round_id', roundId)
     .in('participant_id', body.participantIds)
 
   // Mark non-promoted as not qualified (fires notify_qualified trigger)
   if (notPromotedIds.length > 0) {
-    await client.from('round_participants')
+    await admin.from('round_participants')
       .update({ is_qualified: false })
       .eq('round_id', roundId)
       .in('participant_id', notPromotedIds)
   }
 
   // 3. Find/Create next round
-  let { data: nextRound } = await client
+  let { data: nextRound } = await admin
     .from('rounds')
     .select('*')
     .eq('category_id', currentRound.category_id)
@@ -64,7 +81,7 @@ export default defineEventHandler(async (event) => {
     .single()
 
   if (!nextRound) {
-    const { data: created, error: createErrorMsg } = await client
+    const { data: created, error: createErrorMsg } = await admin
       .from('rounds')
       .insert({
         category_id: currentRound.category_id,
@@ -89,7 +106,7 @@ export default defineEventHandler(async (event) => {
     is_qualified: false
   }))
 
-  const { error: insertError } = await client
+  const { error: insertError } = await admin
     .from('round_participants')
     .insert(roundParticipants)
 
@@ -124,7 +141,7 @@ export default defineEventHandler(async (event) => {
         is_promoted: body.participantIds.includes(p.id),
         is_final: !!body.isFinal,
         contest_slug: contestSlug,
-      }).catch(() => {})
+      }).catch((e: any) => { console.error('[promote] email failed:', e?.message) })
     }
   }
 

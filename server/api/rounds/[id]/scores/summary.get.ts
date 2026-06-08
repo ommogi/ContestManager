@@ -15,8 +15,8 @@ export default defineEventHandler(async (event) => {
     .single()
 
   if (roundError || !roundData) throw createError({ statusCode: 404, statusMessage: 'Round not found' })
-  const categories = roundData.categories as { contest_id: string } | null
-  const contestId = categories?.contest_id
+  const categories = Array.isArray(roundData.categories) ? roundData.categories[0] : roundData.categories
+  const contestId = (categories as { contest_id: string } | null | undefined)?.contest_id
   if (!contestId) throw createError({ statusCode: 500, statusMessage: 'Could not resolve contest ID' })
 
   // Auth gate — require org owner or contest member

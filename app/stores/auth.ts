@@ -86,7 +86,7 @@ export const useAuthStore = defineStore('auth', () => {
       session.value = currentSession
       user.value = currentSession.user ?? null
       // Set Realtime JWT before any composable subscribes to channels
-      try { supabase.realtime.setAuth(currentSession.access_token) } catch {}
+      try { supabase.realtime.setAuth(currentSession.access_token) } catch (e) { console.error('[auth] realtime.setAuth failed:', e) }
     }
 
     if (user.value) {
@@ -144,15 +144,21 @@ export const useAuthStore = defineStore('auth', () => {
     if (result.data?.user && !result.error) {
       console.log('[auth] Calling welcome email endpoint...')
       try {
-        const welcomeResult = await $fetch('/api/auth/welcome', {
-          method: 'POST',
-          body: {
-            email,
-            first_name: null,
-            marketing_consent: marketingConsent || false,
-          },
-        })
-        console.log('[auth] Welcome email endpoint response:', welcomeResult)
+        const token = result.data.session?.access_token
+        if (!token) {
+          console.warn('[auth] No session token after signup — skipping welcome email (email confirmation may be required)')
+        } else {
+          const welcomeResult = await $fetch('/api/auth/welcome', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: {
+              email,
+              first_name: null,
+              marketing_consent: marketingConsent || false,
+            },
+          })
+          console.log('[auth] Welcome email endpoint response:', welcomeResult)
+        }
       } catch (err) {
         console.error('[auth] Welcome email failed:', err)
       }
@@ -179,7 +185,7 @@ export const useAuthStore = defineStore('auth', () => {
       }
       // scope='local' skips POST /auth/v1/logout → safe when token already invalid
       // (e.g. after user deletion). Default scope='global' preserves prior behavior.
-      try { await getSupabase().auth.signOut(opts.scope ? { scope: opts.scope } : undefined) } catch {}
+      try { await getSupabase().auth.signOut(opts.scope ? { scope: opts.scope } : undefined) } catch (e) { console.error('[auth] signOut failed:', e) }
       session.value = null
       user.value = null
       profile.value = null

@@ -17,9 +17,14 @@ import { Button } from '@/components/ui/button'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const slug = route.params.slug as string
 
-const { data: stats, pending } = await useFetch(`/api/contests/${slug}/stats`)
+const { data: stats, pending } = await useFetch(`/api/contests/${slug}/stats`, {
+  headers: computed(() => ({
+    Authorization: `Bearer ${authStore.session?.access_token ?? ''}`,
+  })),
+})
 
 // Helper para formatear moneda
 const formatCurrency = (cents: number) => {

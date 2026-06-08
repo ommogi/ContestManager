@@ -11,11 +11,15 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:selection', value: string[]): void
   (e: 'delete', id: string): void
+  (e: 'resend', id: string): void
 }>()
 
 const tableRef = ref()
 
-const columns = createColumns((id: string) => emit('delete', id))
+const columns = createColumns(
+  (id: string) => emit('delete', id),
+  (id: string) => emit('resend', id),
+)
 
 // Sync selection back to parent
 watch(() => tableRef.value?.table?.getFilteredSelectedRowModel().rows, (rows) => {

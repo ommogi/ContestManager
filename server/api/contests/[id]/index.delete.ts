@@ -21,6 +21,6 @@ export default defineEventHandler(async (event) => {
   if (!row) throw createError({ statusCode: 404, statusMessage: 'contest_not_found' })
 
   const { error } = await client.from('contests').delete().eq('id', (row as any).id)
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+  if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   return { success: true }
 })

@@ -23,15 +23,20 @@ export default defineEventHandler(async (event) => {
   if (!cat?.contest_id) throw createError({ statusCode: 500, statusMessage: 'Could not resolve contest' })
   await requireOrgOwnerOrMember(event, cat.contest_id)
 
+  // Limit participant fields to avoid leaking PII and financial data
+  const participantFields = 'id, name, first_name, last_name, status, created_at, updated_at'
   const { data, error } = await client
     .from('round_participants')
     .select(`
       *,
-      participant:participants(*)
+      participant:participants(${participantFields})
     `)
     .eq('round_id', roundId)
     .order('order', { ascending: true })
-    
-  if (error) throw createError({ statusCode: 500, statusMessage: error.message })
+
+  if (error) {
+    console.error('[round-participants] fetch failed:', error.message)
+    throw createError({ statusCode: 500, statusMessage: 'internal_error' })
+  }
   return data
 })

@@ -104,6 +104,7 @@ function next() {
   else cursor.value = addDays(cursor.value, 1)
 }
 function goToday() { cursor.value = new Date(today.getFullYear(), today.getMonth(), today.getDate()) }
+function goToDay(d: Date) { cursor.value = new Date(d); view.value = 'day' }
 
 // ── Filters ──────────────────────────────────────────────────────
 const filterContest = ref<string>('all')
@@ -316,7 +317,7 @@ function hourLabel(h: number) {
           <SelectTrigger class="w-44 h-9 border-2"><SelectValue placeholder="Participante" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos los participantes</SelectItem>
-            <SelectItem v-for="p in filteredParticipantOptions" :key="p.id" :value="p.id">{{ p.name }}</SelectItem>
+            <SelectItem v-for="p in filteredParticipantOptions" :key="p.id" :value="p.id">{{ p.name || `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() }}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -370,15 +371,16 @@ function hourLabel(h: number) {
           <div
             v-for="(d, i) in monthGridDays"
             :key="i"
-            class="min-h-[120px] border-r border-b border-zinc-100 dark:border-zinc-900 p-1.5 flex flex-col gap-1"
+            class="min-h-[120px] border-r border-b border-zinc-100 dark:border-zinc-900 p-1.5 flex flex-col gap-1 cursor-pointer"
             :class="[
               d.getMonth() !== cursor.getMonth() ? 'bg-zinc-50/40 dark:bg-zinc-900/30' : 'bg-white dark:bg-zinc-950/40',
               (i + 1) % 7 === 0 ? 'border-r-0' : ''
             ]"
+            @dblclick="goToDay(d)"
           >
             <div class="flex items-center justify-between">
               <span
-                class="text-xs font-bold"
+                class="text-xs font-bold rounded-full"
                 :class="[
                   sameDay(d, today) ? 'w-6 h-6 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center'
                     : d.getMonth() !== cursor.getMonth() ? 'text-zinc-400' : 'text-zinc-700 dark:text-zinc-300'
@@ -422,8 +424,9 @@ function hourLabel(h: number) {
               {{ d.toLocaleDateString('es-ES', { weekday: 'short' }) }}
             </div>
             <div
-              class="mt-0.5 text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full"
+              class="mt-0.5 text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full cursor-pointer hover:opacity-70 transition-opacity"
               :class="sameDay(d, today) ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900' : 'text-zinc-700 dark:text-zinc-300'"
+              @click="goToDay(d)"
             >{{ d.getDate() }}</div>
           </div>
         </div>

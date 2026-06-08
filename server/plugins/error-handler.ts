@@ -22,7 +22,7 @@ export default (nitroApp: NitroApp) => {
           tags: { status: String(status), method },
           extra: { url, data: err?.data },
         })
-      } catch {}
+      } catch { console.error('[error-handler] sentry capture failed') }
     }
   })
 }

@@ -40,7 +40,7 @@ export default defineEventHandler(async (event) => {
 
   if (rounds && rounds.length > 0) {
     throw createError({
-      statusCode: 403,
+      statusCode: 409,
       statusMessage: 'No se puede eliminar el participante porque las rondas ya han comenzado o finalizado.',
     })
   }

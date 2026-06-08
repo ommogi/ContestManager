@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
+import { CheckoutEnrollmentSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const user = requireAuth(event)
@@ -8,14 +9,12 @@ export default defineEventHandler(async (event) => {
   const token = getRouterParam(event, 'token')
   if (!token) throw createError({ statusCode: 400, statusMessage: 'Missing token' })
 
-  const body = await readBody(event)
-  const {
-    category_id, first_name, last_name, birthdate,
-    dni = null, country = null, email = null, phone = null,
-  } = body || {}
-  if (!category_id || !first_name || !last_name || !birthdate) {
-    throw createError({ statusCode: 400, statusMessage: 'Faltan campos requeridos' })
+  const rawBody = await readBody(event)
+  const parsed = CheckoutEnrollmentSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
+  const { category_id, first_name, last_name, birthdate, dni, country, email, phone } = parsed.data
 
   const admin = serverSupabaseAdmin()
 
@@ -54,7 +53,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', category_id)
     .eq('contest_id', contest.id)
     .maybeSingle()
-  if (catErr) throw createError({ statusCode: 500, statusMessage: catErr.message })
+  if (catErr) { console.error("[api error]", catErr.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   if (!cat) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
 
   const effectiveEmail = email || user.email
@@ -64,6 +63,23 @@ export default defineEventHandler(async (event) => {
   const feeBps = Math.max(0, Math.min(10000, parseInt(String(config.platformFeeBps ?? '500'), 10) || 0))
   const applicationFee = Math.floor((contest.entry_fee_cents * feeBps) / 10000)
   const stripe = getStripe()
+
+  // Idempotency: reuse an open session for the same user+contest+category within 24h
+  try {
+    const existingSessions = await stripe.checkout.sessions.list({
+      limit: 1,
+      status: 'open',
+      customer_email: effectiveEmail ?? undefined,
+    })
+    const existing = existingSessions.data.find(
+      (s) => s.metadata?.user_id === user.id && s.metadata?.contest_id === contest.id && s.metadata?.category_id === category_id && s.status === 'open'
+    )
+    if (existing?.url) {
+      return { url: existing.url, id: existing.id }
+    }
+  } catch {
+    // fall through to create a new session
+  }
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',

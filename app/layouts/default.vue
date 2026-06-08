@@ -1,10 +1,7 @@
 <script setup lang="ts">
 import { Toaster } from '@/components/ui/sonner'
-import { Button } from '@/components/ui/button'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Input } from '@/components/ui/input'
 import CommandPalette from '@/components/ui/CommandPalette.vue'
-import { Search } from 'lucide-vue-next'
+import { Search, Sun, Moon } from 'lucide-vue-next'
 import {
   SidebarProvider,
   Sidebar,
@@ -18,8 +15,8 @@ import {
   SidebarTrigger,
   SidebarInset
 } from '@/components/ui/sidebar'
-import { useRoute, useRouter } from 'vue-router'
-import { LayoutDashboard, Trophy, Settings, LogOut, Sun, Moon, Users, Wallet, Ticket, Calendar as CalendarIcon } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
+import { LayoutDashboard, Trophy, Settings, Users, Wallet, Ticket, Calendar as CalendarIcon } from 'lucide-vue-next'
 import Profile from '@/components/user/profile.vue'
 import NotificationsPopover from '@/components/ui/notifications/NotificationsPopover.vue'
 import {
@@ -29,23 +26,10 @@ import {
 import { useBreadcrumbs } from '@/composables/useBreadcrumbs'
 
 const route = useRoute()
-const router = useRouter()
-const colorMode = useColorMode()
 const authStore = useAuthStore()
 const { breadcrumbs } = useBreadcrumbs()
 
-const { displayName, initials, organization, isOrgOwner, profile } = storeToRefs(authStore)
-
-function toggleColorMode() {
-  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
-}
-
-async function handleSignOut() {
-  await authStore.signOut()
-  // Small delay to ensure auth state is fully cleared before navigation
-  await new Promise(resolve => setTimeout(resolve, 50))
-  await router.push('/auth/login')
-}
+const { isOrgOwner, profile } = storeToRefs(authStore)
 
 // ── Ticket balance (org owners) ─────────────────────────────────────
 const ticketBalance = ref<number | null>(null)
@@ -61,6 +45,12 @@ async function refreshBalance() {
   }
 }
 watchEffect(() => { if (isOrgOwner.value && authStore.session) refreshBalance() })
+
+// Color mode
+const colorMode = useColorMode()
+function toggleColorMode() {
+  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
+}
 
 // Command palette
 const commandPaletteRef = ref<{ open: () => void } | null>(null)
@@ -142,6 +132,15 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
                   </NuxtLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton as-child :isActive="route.path.startsWith('/my-calendar')" tooltip="Mi Calendario">
+                  <NuxtLink to="/my-calendar">
+                    <CalendarIcon />
+                    <span>Mi Calendario</span>
+                  </NuxtLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
             </template>
 
             <SidebarMenuItem>
@@ -213,12 +212,15 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
               <span>{{ ticketBalance }}</span>
               <span class="text-muted-foreground font-normal">tickets</span>
             </NuxtLink>
+            <button
+              @click="toggleColorMode"
+              class="flex items-center justify-center w-9 h-9 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              :title="colorMode.value === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'"
+            >
+              <Sun v-if="colorMode.value === 'dark'" class="w-4 h-4" />
+              <Moon v-else class="w-4 h-4" />
+            </button>
             <NotificationsPopover />
-            <Button variant="ghost" size="icon" @click="toggleColorMode" class="rounded-full w-9 h-9">
-              <Sun v-if="colorMode.value === 'dark'" class="w-5 h-5" />
-              <Moon v-else class="w-5 h-5" />
-              <span class="sr-only">Toggle theme</span>
-            </Button>
             <template #fallback>
               <div class="w-9 h-9" />
             </template>

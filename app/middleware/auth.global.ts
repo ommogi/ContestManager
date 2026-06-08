@@ -1,6 +1,6 @@
 import { useAuthStore } from '~/stores/auth'
 
-const PUBLIC_PATHS = ['/auth/login', '/auth/callback', '/join', '/c/']
+const PUBLIC_PATHS = ['/auth/login', '/auth/callback', '/join', '/c/', '/invite']
 const ONBOARDING_PATH = '/onboarding'
 
 // Only org owners can access these
@@ -29,6 +29,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (isPublic
       && !to.path.startsWith('/join')
       && !to.path.startsWith('/c/')
+      && !to.path.startsWith('/invite')
       && !to.path.startsWith('/auth/callback')
       && !fromOnboarding) {
     return navigateTo('/dashboard')

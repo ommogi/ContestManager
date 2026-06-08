@@ -1,8 +1,9 @@
 import { defineEventHandler, readBody, createError } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
+import { CheckoutPlanSchema } from '~~/server/utils/schemas'
 
-const PLAN_NAMES: Record<string, string> = {
+const PLAN_NAMES: Record<'starter' | 'pro' | 'enterprise', string> = {
   starter: 'Starter — 50 tickets + 1 activación',
   pro: 'Pro — 200 tickets + 3 activaciones',
   enterprise: 'Enterprise — 1000 tickets + 10 activaciones',
@@ -11,10 +12,12 @@ const PLAN_NAMES: Record<string, string> = {
 export default defineEventHandler(async (event) => {
   const { user, org } = await requireOrgOwner(event)
 
-  const { plan } = (await readBody(event)) || {}
-  if (!plan || !PLAN_NAMES[plan]) {
+  const rawBody = await readBody(event)
+  const parsed = CheckoutPlanSchema.safeParse(rawBody)
+  if (!parsed.success) {
     throw createError({ statusCode: 400, statusMessage: 'invalid_plan' })
   }
+  const { plan } = parsed.data
 
   const admin = serverSupabaseAdmin()
 
@@ -26,6 +29,24 @@ export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
   const baseUrl = config.appBaseUrl || 'http://localhost:3000'
   const stripe = getStripe()
+
+  // Idempotency: reuse an open session for the same user+org+plan within 24h
+  const idempotencyKey = `checkout-bundle:${user.id}:${org.id}:${plan}`
+  try {
+    const existingSessions = await stripe.checkout.sessions.list({
+      limit: 1,
+      status: 'open',
+      customer_email: user.email ?? undefined,
+    })
+    const existing = existingSessions.data.find(
+      (s) => s.metadata?.organization_id === org.id && s.metadata?.plan === plan && s.status === 'open'
+    )
+    if (existing?.url) {
+      return { url: existing.url, id: existing.id }
+    }
+  } catch {
+    // fall through to create a new session
+  }
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',

@@ -17,19 +17,34 @@ export default defineEventHandler(async (event) => {
     `)
     .eq('user_id', user.id)
 
-  if (pError) throw createError({ statusCode: 500, statusMessage: pError.message })
+  if (pError) { console.error("[api error]", pError.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
-  // Judge entries at contest level
-  const { data: judgeEntries, error: jError } = await client
-    .from('contest_members')
-    .select(`
-      contest_id,
-      contests!inner(id, name, slug, description, type, status, starts_at, ends_at, organization_id)
-    `)
-    .or(`user_id.eq.${user.id},email.eq.${user.email}`)
-    .eq('role', 'judge')
+  // Judge entries at contest level (two separate queries to avoid string interpolation in .or())
+  const [byUserId, byEmail] = await Promise.all([
+    client
+      .from('contest_members')
+      .select(`
+        contest_id,
+        contests!inner(id, name, slug, description, type, status, starts_at, ends_at, organization_id)
+      `)
+      .eq('user_id', user.id)
+      .eq('role', 'judge'),
+    user.email
+      ? client
+          .from('contest_members')
+          .select(`
+            contest_id,
+            contests!inner(id, name, slug, description, type, status, starts_at, ends_at, organization_id)
+          `)
+          .eq('email', user.email)
+          .eq('role', 'judge')
+      : Promise.resolve({ data: [], error: null }),
+  ])
 
-  if (jError) throw createError({ statusCode: 500, statusMessage: jError.message })
+  if (byUserId.error) throw createError({ statusCode: 500, statusMessage: byUserId.error.message })
+  if (byEmail.error) throw createError({ statusCode: 500, statusMessage: byEmail.error.message })
+
+  const judgeEntries = [...(byUserId.data ?? []), ...(byEmail.data ?? [])]
 
   // Fetch all categories for judge contests in one query
   const judgeContestIds = (judgeEntries ?? []).map((j: any) => j.contest_id)

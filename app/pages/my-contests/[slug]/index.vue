@@ -3,6 +3,10 @@ import { ArrowLeft, Trophy, Calendar, CalendarClock, ChevronRight, Layers, Users
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { marked } from 'marked'
 
 const DEFAULT_COVER = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/default-cover.png'
@@ -47,7 +51,10 @@ function canCancel(catId: string): boolean {
 }
 
 const cancellingId = ref<string | null>(null)
+const cancelTarget = ref<any | null>(null)
+const showCancelDialog = ref(false)
 const receiptLoadingId = ref<string | null>(null)
+
 async function openReceipt(p: any) {
   receiptLoadingId.value = p.id
   try {
@@ -65,16 +72,20 @@ async function openReceipt(p: any) {
     receiptLoadingId.value = null
   }
 }
-async function cancelParticipant(p: any) {
+
+function requestCancel(p: any) {
   if (!canCancel(p.category_id)) {
     toast.error('No puedes cancelar: las rondas ya han comenzado.')
     return
   }
-  const isPaid = p.payment_status === 'paid'
-  const msg = isPaid
-    ? '¿Cancelar inscripción y solicitar reembolso?'
-    : '¿Cancelar inscripción?'
-  if (!confirm(msg)) return
+  cancelTarget.value = p
+  showCancelDialog.value = true
+}
+
+async function confirmCancel() {
+  const p = cancelTarget.value
+  if (!p) return
+  showCancelDialog.value = false
   cancellingId.value = p.id
   try {
     const r = await $fetch<any>(`/api/participants/${p.id}/cancel`, {
@@ -87,6 +98,7 @@ async function cancelParticipant(p: any) {
     toast.error(e?.statusMessage || 'Error al cancelar')
   } finally {
     cancellingId.value = null
+    cancelTarget.value = null
   }
 }
 
@@ -141,7 +153,7 @@ const categoryStatusBadge = (s: string) => ({
 
 const activeTab = ref('categorias')
 const parsedDescription = computed(() => marked.parse(contest.value?.description || '') as string)
-const parsedRules = computed(() => marked.parse((contest.value?.settings as any)?.rules || '') as string)
+const parsedRules = computed(() => marked.parse(contest.value?.rules || '') as string)
 </script>
 
 <template>
@@ -259,7 +271,7 @@ const parsedRules = computed(() => marked.parse((contest.value?.settings as any)
                 variant="outline"
                 size="sm"
                 :disabled="cancellingId === p.id"
-                @click="cancelParticipant(p)"
+                @click="requestCancel(p)"
               >
                 <Loader2 v-if="cancellingId === p.id" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
                 <X v-else class="w-3.5 h-3.5 mr-1.5" />
@@ -395,7 +407,7 @@ const parsedRules = computed(() => marked.parse((contest.value?.settings as any)
         <!-- Reglamento tab -->
         <TabsContent value="reglamento" class="mt-0 pt-6 pb-4">
           <div
-            v-if="(contest?.settings as any)?.rules"
+            v-if="contest?.rules"
             class="rich-content text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed"
             v-html="parsedRules"
           />
@@ -406,5 +418,26 @@ const parsedRules = computed(() => marked.parse((contest.value?.settings as any)
         </TabsContent>
       </Tabs>
     </template>
+
+    <!-- Cancel participant dialog -->
+    <AlertDialog v-model:open="showCancelDialog">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Cancelar inscripción</AlertDialogTitle>
+          <AlertDialogDescription>
+            {{ cancelTarget?.payment_status === 'paid'
+              ? '¿Cancelar inscripción y solicitar reembolso?'
+              : '¿Cancelar inscripción?' }}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>No cancelar</AlertDialogCancel>
+          <AlertDialogAction :disabled="!!cancellingId" @click="confirmCancel">
+            <Loader2 v-if="cancellingId" class="w-3.5 h-3.5 animate-spin mr-1" />
+            Confirmar
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </div>
 </template>

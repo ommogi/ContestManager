@@ -15,9 +15,10 @@ export default defineEventHandler(async (event) => {
   if (token) {
     const adminClient = serverSupabaseAdmin()
     const { data: { user }, error } = await adminClient.auth.getUser(token)
-    
-    if (user && !error) {
-       event.context.user = user
+
+    if (error || !user) {
+      throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })
     }
+    event.context.user = user
   }
 })

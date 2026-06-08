@@ -80,11 +80,15 @@ async function finishContentAndCreate() {
 }
 
 // ── Step 4 – Categories ──────────────────────────────────────────────────────
-interface CategoryEntry { id: string; name: string; judges: JudgeEntry[] }
+interface CategoryEntry { id: string; name: string; min_age: number | null; max_age: number | null; max_participants: number | null; entry_fee_cents: number | null; judges: JudgeEntry[] }
 interface JudgeEntry { memberId: string; poolId: string; name: string; email: string }
 
 const categories = ref<CategoryEntry[]>([])
 const categoryInput = ref('')
+const categoryMinAge = ref<number | null>(null)
+const categoryMaxAge = ref<number | null>(null)
+const categoryMaxParticipants = ref<number | null>(null)
+const categoryEntryFee = ref<number | null>(null)
 const isAddingCategory = ref(false)
 
 async function addCategory() {
@@ -92,12 +96,22 @@ async function addCategory() {
   if (!name || !createdContest.value || isAddingCategory.value) return
   isAddingCategory.value = true
   try {
+    const body: Record<string, any> = { name }
+    if (categoryMinAge.value != null) body.min_age = categoryMinAge.value
+    if (categoryMaxAge.value != null) body.max_age = categoryMaxAge.value
+    if (categoryMaxParticipants.value != null) body.max_participants = categoryMaxParticipants.value
+    if (categoryEntryFee.value != null) body.entry_fee_cents = categoryEntryFee.value * 100
+
     const data = await ($fetch as any)(`/api/contests/${createdContest.value.id}/categories`, {
-      method: 'POST', body: { name },
+      method: 'POST', body,
     })
-    const cat: CategoryEntry = { id: data.id, name: data.name, judges: [] }
+    const cat: CategoryEntry = { id: data.id, name: data.name, min_age: data.min_age ?? null, max_age: data.max_age ?? null, max_participants: data.max_participants ?? null, entry_fee_cents: data.entry_fee_cents ?? null, judges: [] }
     categories.value.push(cat)
     categoryInput.value = ''
+    categoryMinAge.value = null
+    categoryMaxAge.value = null
+    categoryMaxParticipants.value = null
+    categoryEntryFee.value = null
     pendingCategoryId.value = cat.id
     judgePickerOpen.value = true
   } catch (e: any) {
@@ -492,23 +506,69 @@ const progressWidth = computed(() => `${(step.value - 1) * 25}%`)
         </div>
 
         <div class="px-8 py-7 space-y-5">
-          <div class="flex gap-2">
-            <Input
-              v-model="categoryInput"
-              placeholder="Nombre de la categoría (ej. Piano Junior)"
-              class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg flex-1 focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
-              @keydown.enter.prevent="addCategory"
-            />
-            <Button
-              :disabled="!categoryInput.trim() || isAddingCategory"
-              class="h-11 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 flex items-center gap-1.5"
-              @click="addCategory"
-            >
-              <Loader2 v-if="isAddingCategory" class="w-4 h-4 animate-spin" />
-              <Plus v-else class="w-4 h-4" />
-              Añadir
-            </Button>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="space-y-1.5">
+              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nombre <span class="text-red-500">*</span></Label>
+              <Input
+                v-model="categoryInput"
+                placeholder="Nombre de la categoría (ej. Piano Junior)"
+                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
+                @keydown.enter.prevent="addCategory"
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-1.5">
+                <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Edad mínima</Label>
+                <Input
+                  v-model.number="categoryMinAge"
+                  type="number"
+                  placeholder="0"
+                  min="0"
+                  class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
+                />
+              </div>
+              <div class="space-y-1.5">
+                <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Edad máxima</Label>
+                <Input
+                  v-model.number="categoryMaxAge"
+                  type="number"
+                  placeholder="99"
+                  min="0"
+                  class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
+                />
+              </div>
+            </div>
+            <div class="space-y-1.5">
+              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Cupos máximos</Label>
+              <Input
+                v-model.number="categoryMaxParticipants"
+                type="number"
+                placeholder="Sin límite"
+                min="1"
+                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
+              />
+            </div>
+            <div class="space-y-1.5">
+              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Precio inscripción (€)</Label>
+              <Input
+                v-model.number="categoryEntryFee"
+                type="number"
+                placeholder="Gratis"
+                min="0"
+                step="0.01"
+                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
+              />
+            </div>
           </div>
+          <Button
+            :disabled="!categoryInput.trim() || isAddingCategory"
+            class="h-11 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 flex items-center gap-1.5 w-full"
+            @click="addCategory"
+          >
+            <Loader2 v-if="isAddingCategory" class="w-4 h-4 animate-spin" />
+            <Plus v-else class="w-4 h-4" />
+            Añadir categoría
+          </Button>
 
           <div v-if="categories.length" class="space-y-2">
             <div
@@ -519,6 +579,13 @@ const progressWidth = computed(() => `${(step.value - 1) * 25}%`)
               <div class="flex items-start justify-between gap-3">
                 <div class="flex-1 min-w-0">
                   <p class="text-sm font-bold text-zinc-900 dark:text-zinc-100">{{ cat.name }}</p>
+                  <div class="flex flex-wrap gap-2 mt-1.5 text-[10px] text-zinc-500">
+                    <span v-if="cat.min_age != null || cat.max_age != null">
+                      Edad: {{ cat.min_age ?? 0 }}–{{ cat.max_age ?? '∞' }}
+                    </span>
+                    <span v-if="cat.max_participants != null">· {{ cat.max_participants }} cupos</span>
+                    <span v-if="cat.entry_fee_cents != null">· {{ (cat.entry_fee_cents / 100).toFixed(2) }}€</span>
+                  </div>
                   <div v-if="cat.judges.length" class="flex flex-wrap gap-1.5 mt-2">
                     <Badge
                       v-for="j in cat.judges"

@@ -36,7 +36,7 @@ import Grainient from '@/components/ui/Grainient.vue'
     </ClientOnly>
 
     <main class="relative min-h-screen flex items-center justify-center px-4 py-16">
-      <div class="w-full max-w-md">
+      <div class="w-full max-w-2xl">
         <slot />
       </div>
     </main>
