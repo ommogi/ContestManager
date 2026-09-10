@@ -297,9 +297,27 @@ async function sendWithLog(
 
   const from = process.env.RESEND_FROM || 'ContestSaas <noreply@contestsaas.app>'
   try {
-    const r = await resend.emails.send({ from, to: opts.to, subject: opts.subject, html: opts.html })
-    await updateEmailLog(logId, 'sent', r?.data?.id ?? null)
-    return { sent: true, id: r?.data?.id ?? null }
+    // The SDK resolves with { data, error } and only rejects on transport
+    // failures, so every API-level rejection — unverified sender domain,
+    // invalid recipient, rate limit, revoked key — arrives here rather than in
+    // the catch below. Ignoring `error` marked those as sent and returned
+    // sent: true while nothing was ever delivered.
+    const { data, error } = await resend.emails.send({
+      from,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+    })
+
+    if (error) {
+      const message = `${error.name}: ${error.message}`
+      await updateEmailLog(logId, 'failed', null, message)
+      console.error('[email] resend rejected:', message)
+      return { sent: false, id: null, error: message }
+    }
+
+    await updateEmailLog(logId, 'sent', data?.id ?? null)
+    return { sent: true, id: data?.id ?? null }
   } catch (err: any) {
     await updateEmailLog(logId, 'failed', null, err?.message)
     console.error('[email] resend failed:', err?.message)
