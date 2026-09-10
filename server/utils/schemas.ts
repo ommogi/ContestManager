@@ -227,16 +227,99 @@ export const ScoreOverrideSchema = z.object({
   final_score_override_notes: z.string().max(1000).nullable().optional(),
 })
 
-const FormFieldSchema = z.object({
-  key: z.string().min(1).max(100),
+// Mirrors the contract in shared/inscription-form.ts. The previous version
+// demanded `key` and `options: string[]`, neither of which the builder emits,
+// so a real form was rejected with 400. It was also `.loose()`, which let any
+// unknown key through unvalidated.
+const FormFieldOptionSchema = z.object({
+  value: z.string().min(1).max(200),
   label: z.string().min(1).max(200),
-  type: z.string().min(1).max(50),
+  icon: z.string().max(100).optional(),
+})
+
+const FormFieldValidationSchema = z.object({
   required: z.boolean().optional(),
-  options: z.array(z.string().max(200)).max(100).optional(),
+  minLength: z.number().int().min(0).optional(),
+  maxLength: z.number().int().min(0).optional(),
+  minValue: z.number().optional(),
+  maxValue: z.number().optional(),
+  pattern: z.string().max(500).optional(),
+  patternMessage: z.string().max(200).optional(),
+  customRule: z.enum(['email', 'phone', 'url', 'dni']).optional(),
+}).strict()
+
+const FormFieldSchema = z.object({
+  id: z.string().min(1).max(100),
+  type: z.enum([
+    'text', 'textarea', 'number', 'email', 'phone', 'date',
+    'select', 'radio', 'checkbox', 'checkbox-group', 'file', 'url',
+  ]),
+  label: z.string().min(1).max(200),
+  labelTranslations: z.record(z.string(), z.string().max(200)).optional(),
+  description: z.string().max(1000).optional(),
+  descriptionTranslations: z.record(z.string(), z.string().max(1000)).optional(),
   placeholder: z.string().max(200).nullable().optional(),
-  order: z.number().int().min(0).optional(),
-}).loose()
+  defaultValue: z.unknown().optional(),
+  required: z.boolean(),
+  order: z.number().int().min(0),
+  hidden: z.boolean(),
+  validation: FormFieldValidationSchema,
+  width: z.enum(['full', 'half', 'third']).optional(),
+
+  // Per-type extras. Kept optional here and checked against `type` by the
+  // superRefine below, which is simpler to read than a discriminated union
+  // spread across twelve members.
+  rows: z.number().int().min(1).max(50).optional(),
+  step: z.number().optional(),
+  options: z.array(FormFieldOptionSchema).max(100).optional(),
+  allowOther: z.boolean().optional(),
+  checkedLabel: z.string().max(200).optional(),
+  uncheckedLabel: z.string().max(200).optional(),
+  minSelected: z.number().int().min(0).optional(),
+  maxSelected: z.number().int().min(0).optional(),
+  accept: z.string().max(200).optional(),
+  maxFiles: z.number().int().min(1).max(20).optional(),
+  maxSizeMB: z.number().min(0).max(100).optional(),
+}).strict().superRefine((field, ctx) => {
+  const needsOptions = field.type === 'select'
+    || field.type === 'radio'
+    || field.type === 'checkbox-group'
+
+  if (needsOptions && (!field.options || field.options.length === 0)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['options'],
+      message: `El campo de tipo "${field.type}" necesita al menos una opción.`,
+    })
+  }
+
+  if (field.options) {
+    const values = field.options.map(o => o.value)
+    if (new Set(values).size !== values.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['options'],
+        message: 'Las opciones no pueden repetir el mismo valor.',
+      })
+    }
+  }
+})
 
 export const FormSchemaBodySchema = z.object({
   fields: z.array(FormFieldSchema).max(100),
+}).superRefine((body, ctx) => {
+  // Duplicate ids would silently overwrite each other in FormResponses, which
+  // is keyed by field id.
+  const ids = body.fields.map(f => f.id)
+  const seen = new Set<string>()
+  ids.forEach((id, index) => {
+    if (seen.has(id)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['fields', index, 'id'],
+        message: `El identificador de campo "${id}" está repetido.`,
+      })
+    }
+    seen.add(id)
+  })
 })
