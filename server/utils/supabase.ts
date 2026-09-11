@@ -4,10 +4,32 @@ import { getHeader, createError } from 'h3'
 
 let _adminClient: ReturnType<typeof createClient> | null = null
 
+/**
+ * Service-role Supabase client. Bypasses RLS, so every caller must have passed
+ * an ownership/membership gate first (`requireOrgOwner`, `requireOrgOwnerOrMember`).
+ *
+ * Fails loudly when its env vars are missing (KAN-55). Previously the `|| ''`
+ * fallbacks swallowed the absence and built a client with an empty key: the
+ * misconfiguration only surfaced later as an opaque PostgREST auth error on the
+ * first query, naming nothing. Now the very first call names the exact variable
+ * that is missing. The thrown `Error` is not an H3 error on purpose — Nitro
+ * turns unhandled errors into a generic 500, so the variable name reaches the
+ * server log and never the client.
+ */
 export const serverSupabaseAdmin = () => {
   if (_adminClient) return _adminClient
   const url = process.env.SUPABASE_URL || ''
   const serviceKey = process.env.SUPABASE_SERVICE_KEY || ''
+  const missing: string[] = []
+  if (!url.trim()) missing.push('SUPABASE_URL')
+  if (!serviceKey.trim()) missing.push('SUPABASE_SERVICE_KEY')
+  if (missing.length > 0) {
+    throw new Error(
+      `[supabase] Missing required environment variable(s): ${missing.join(', ')}. `
+      + 'The admin (service-role) client cannot be created. Set them in your .env '
+      + '(see .env.example) or in the hosting provider environment settings.',
+    )
+  }
   _adminClient = createClient(url, serviceKey, {
     auth: {
       autoRefreshToken: false,

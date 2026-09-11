@@ -63,7 +63,7 @@ const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
 /**
  * Normalized fragments: any key *containing* one of these is redacted.
  * Covers the open-ended families (`invite_token`, `inscription_token`,
- * `access_token`, `SUPABASE_SERVICE_ROLE_KEY`, ...) without enumerating them.
+ * `access_token`, ...) without enumerating them.
  */
 const SENSITIVE_FRAGMENTS: readonly string[] = [
   'password', 'secret', 'token', 'apikey', 'authorization', 'creditcard',
