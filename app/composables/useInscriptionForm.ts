@@ -9,7 +9,6 @@ import type {
   FieldValidationError,
   InscriptionFormSchema
 } from '~/types/inscription-form'
-import { generateId } from '~/utils'
 
 /**
  * Composable for managing dynamic inscription forms
