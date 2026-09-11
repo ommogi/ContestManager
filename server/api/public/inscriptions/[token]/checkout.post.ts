@@ -2,6 +2,11 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 import { CheckoutEnrollmentSchema } from '~~/server/utils/schemas'
+import {
+  prepareFormSubmission,
+  refreshPendingFormResponses,
+  stashPendingFormResponses,
+} from '~~/server/utils/inscription-form-responses'
 
 export default defineEventHandler(async (event) => {
   const user = requireAuth(event)
@@ -56,6 +61,10 @@ export default defineEventHandler(async (event) => {
   if (catErr) { console.error("[api error]", catErr.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
   if (!cat) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
 
+  // Validate the configurable form before Stripe is involved at all (KAN-49):
+  // a body that fails the schema must not leave a Checkout Session behind.
+  const submission = await prepareFormSubmission(admin, token, parsed.data)
+
   const effectiveEmail = email || user.email
 
   const config = useRuntimeConfig()
@@ -74,11 +83,35 @@ export default defineEventHandler(async (event) => {
     const existing = existingSessions.data.find(
       (s) => s.metadata?.user_id === user.id && s.metadata?.contest_id === contest.id && s.metadata?.category_id === category_id && s.status === 'open'
     )
-    if (existing?.url) {
+    const draftId = existing?.metadata?.form_draft_id
+    // Only reuse a session that can still carry the answers. One opened before
+    // the organizer published the form has no `form_draft_id`, and reusing it
+    // would confirm a payment with nothing to store — let it fall through and
+    // open a fresh session instead.
+    if (existing?.url && (!submission || draftId)) {
+      if (submission && draftId) {
+        // That session's metadata still points at the draft written the first
+        // time round, so the answers just submitted must overwrite that row,
+        // or the payment confirms against whatever was typed before.
+        await refreshPendingFormResponses(admin, draftId, submission)
+      }
       return { url: existing.url, id: existing.id }
     }
   } catch {
     // fall through to create a new session
+  }
+
+  // Park the answers and carry only their id across Stripe. `metadata` caps
+  // values at 500 characters and this flow already spends 13 of the 50 keys,
+  // so a single long `textarea` would make session creation fail outright.
+  // An opaque uuid is 36 characters and one key, whatever the form contains.
+  let formDraftId: string | null = null
+  if (submission) {
+    formDraftId = await stashPendingFormResponses(admin, {
+      contestId: contest.id,
+      userId: user.id,
+      submission,
+    })
   }
 
   const session = await stripe.checkout.sessions.create({
@@ -120,6 +153,9 @@ export default defineEventHandler(async (event) => {
       country: country ?? '',
       email: effectiveEmail ?? '',
       phone: phone ?? '',
+      // Opaque pointer into `pending_form_responses`. Absent when the contest
+      // has no published form, so those sessions keep their old 13 keys.
+      ...(formDraftId ? { form_draft_id: formDraftId } : {}),
     },
     success_url: `${baseUrl}/join/${token}/confirm?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url:  `${baseUrl}/join/${token}?cancel=1`,
