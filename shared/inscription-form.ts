@@ -69,6 +69,14 @@ export interface FormFieldBase {
   required: boolean
   order: number
   hidden: boolean
+  /**
+   * System field with a reserved `core.` id, whose value lands in a typed
+   * `participants` column rather than in `responses_json`. Its `id` and `type`
+   * are fixed; `order`, `label` and — for the non-irreducible ones — `hidden`
+   * and `required` are the organization's to change. See
+   * `./inscription-form-core.ts` for the catalogue and the rules.
+   */
+  isCore?: boolean
   /** Rules live here, never at the field root. */
   validation: FormFieldValidation
   width?: 'full' | 'half' | 'third'

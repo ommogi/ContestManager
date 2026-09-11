@@ -55,6 +55,17 @@ repo pattern wins — flag the divergence to the user, don't silently rewrite.
   `insertNotifications()`. Never abort parent request on notif failure.
 - **Time fields**: `rehearsal_time/end_time/performance_time/end_time` are
   TEXT (datetime-local strings). Calendar API parses to ISO at read time.
+- **Inscription form core fields**: core fields are entries of
+  `inscription_form_schemas.schema_json` with a reserved `core.` id and
+  `isCore: true` (catalogue + rules in `shared/inscription-form-core.ts`).
+  `core.first_name`, `core.last_name`, `core.birthdate` can never be hidden,
+  deleted or made optional — `enroll_participant`'s age guards read them.
+  Core **values** go to the typed `participants` columns, never to
+  `responses_json`.
+- **`participants.metadata`**: unused and off-limits for form data (KAN-56).
+  Custom answers belong in `participant_form_responses`, versioned by
+  `form_schema_id`; a copy here would be a second, unversioned source of truth.
+  See `supabase/migrations/0053_form_core_fields.sql`.
 - **DNI/NIE/Passport**: validate via `app/utils/dni.ts` `validateDni(value, kind)`.
 - **Phone**: `<PhoneInput>` (E.164 stored as `+34600112233`).
 - **Country**: `<CountrySelect>` stores ISO alpha-2 OR Spanish name (legacy rows).

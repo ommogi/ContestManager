@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { validateCoreFields } from '../../shared/inscription-form-core'
+import type { FormField } from '../../shared/inscription-form'
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
@@ -263,6 +265,10 @@ const FormFieldSchema = z.object({
   required: z.boolean(),
   order: z.number().int().min(0),
   hidden: z.boolean(),
+  // KAN-56: core fields travel as ordinary schema entries. The object is
+  // .strict(), so without this key every payload carrying a core field would
+  // be rejected with an unhelpful "unrecognized key".
+  isCore: z.boolean().optional(),
   validation: FormFieldValidationSchema,
   width: z.enum(['full', 'half', 'third']).optional(),
 
@@ -322,4 +328,17 @@ export const FormSchemaBodySchema = z.object({
     }
     seen.add(id)
   })
+
+  // KAN-56: the builder UI hides these controls, but the UI is not the
+  // boundary. first_name / last_name / birthdate cannot be removed, hidden or
+  // made optional here either — the per-category age filter and the
+  // age_below_min / age_above_max guards inside enroll_participant read them.
+  for (const issue of validateCoreFields(body.fields as unknown as FormField[])) {
+    const index = body.fields.findIndex(f => f.id === issue.fieldId)
+    ctx.addIssue({
+      code: 'custom',
+      path: index >= 0 ? ['fields', index] : ['fields'],
+      message: issue.message,
+    })
+  }
 })
