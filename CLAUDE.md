@@ -66,6 +66,12 @@ repo pattern wins — flag the divergence to the user, don't silently rewrite.
   Custom answers belong in `participant_form_responses`, versioned by
   `form_schema_id`; a copy here would be a second, unversioned source of truth.
   See `supabase/migrations/0053_form_core_fields.sql`.
+- **Inscription file uploads**: private bucket `inscription-uploads`, keys
+  `{contest_id}/{user_id}/{field_id}/{uuid}-{name}`. `responses_json` stores
+  `FormFileReference`, never contents. Validate MIME from the bytes via
+  `server/utils/inscription-uploads.ts` — never the client `Content-Type` or
+  the input's `accept`. Every object has a row in `inscription_uploads`; that
+  ledger is what makes orphan sweeping and purge-on-delete possible.
 - **DNI/NIE/Passport**: validate via `app/utils/dni.ts` `validateDni(value, kind)`.
 - **Phone**: `<PhoneInput>` (E.164 stored as `+34600112233`).
 - **Country**: `<CountrySelect>` stores ISO alpha-2 OR Spanish name (legacy rows).
