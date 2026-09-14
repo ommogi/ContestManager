@@ -9,6 +9,11 @@ import type {
 } from '~/types/inscription-form'
 import { useInscriptionForm } from '~/composables/useInscriptionForm'
 import {
+  coreFieldDefinition,
+  isCoreFieldId,
+  isIrreducibleCoreFieldId
+} from '../../../shared/inscription-form-core'
+import {
   Plus,
   Trash2,
   Copy,
@@ -27,6 +32,7 @@ import {
   Link,
   ChevronUp,
   ChevronDown,
+  Lock,
   Save,
   RotateCcw
 } from 'lucide-vue-next'
@@ -108,12 +114,11 @@ interface FieldTypeOption {
   type: FormFieldType
   label: string
   icon: Component
-  /** Offered but not yet wired end to end. */
-  unavailable?: boolean
 }
 
-// `file` stays out until the upload + storage half lands (KAN-59): the
-// builder can describe the field but nothing would persist the uploads.
+// `file` was withheld while the renderer only held browser `File` objects in
+// memory: offering it would have created a field that loses its answer
+// silently. The uploads are real since KAN-41, so it is back in the palette.
 const FIELD_TYPES: FieldTypeOption[] = [
   { type: 'text', label: 'Texto corto', icon: Type },
   { type: 'textarea', label: 'Texto largo', icon: AlignLeft },
@@ -125,7 +130,7 @@ const FIELD_TYPES: FieldTypeOption[] = [
   { type: 'radio', label: 'Opción única', icon: List },
   { type: 'checkbox', label: 'Casilla', icon: CheckSquare },
   { type: 'checkbox-group', label: 'Selección múltiple', icon: CheckSquare },
-  { type: 'file', label: 'Archivo', icon: FileText, unavailable: true },
+  { type: 'file', label: 'Archivo', icon: FileText },
   { type: 'url', label: 'URL', icon: Link }
 ]
 
@@ -150,6 +155,50 @@ function iconFor(type: FormFieldType): Component {
 
 function typeLabel(type: FormFieldType): string {
   return FIELD_TYPES.find(t => t.type === type)?.label ?? type
+}
+
+// ─── Core field rules (KAN-56) ─────────────────────────────────────────────
+// System fields carry a reserved `core.` id. `core.first_name`,
+// `core.last_name` and `core.birthdate` are irreducible: the per-category age
+// filter and `enroll_participant`'s age guards read them, so the server
+// rejects hiding, deleting or relaxing them in three separate layers. The
+// builder hides those controls rather than offering an action that 400s —
+// and `shared/inscription-form-core.ts` stays the single source of the rules.
+
+function isCore(field: FormField): boolean {
+  return field.isCore === true || isCoreFieldId(field.id)
+}
+
+/** Irreducible fields stay visible; the rest of the core block may be hidden. */
+function canHide(field: FormField): boolean {
+  if (!isCore(field)) return true
+  return coreFieldDefinition(field.id)?.hideAllowed ?? true
+}
+
+/** Deleting an irreducible field is the same loss as hiding it. */
+function canDelete(field: FormField): boolean {
+  return canHide(field)
+}
+
+function canBeOptional(field: FormField): boolean {
+  if (!isCore(field)) return true
+  return coreFieldDefinition(field.id)?.optionalAllowed ?? true
+}
+
+/**
+ * A copy of a core field would carry `isCore` with a non-reserved id, which is
+ * neither a core field nor a clean custom one. Core fields are not duplicable.
+ */
+function canDuplicate(field: FormField): boolean {
+  return !isCore(field)
+}
+
+function coreNote(field: FormField): string | null {
+  if (!isCore(field)) return null
+  if (isIrreducibleCoreFieldId(field.id)) {
+    return 'Campo del sistema obligatorio. No se puede ocultar, eliminar ni marcar como opcional.'
+  }
+  return 'Campo del sistema. Puedes reordenarlo, ocultarlo o hacerlo opcional, pero no cambiar su tipo.'
 }
 
 const selectedField = computed(() =>
@@ -206,7 +255,7 @@ function defaultOptions(): FormFieldOption[] {
 }
 
 function addNewField(option: FieldTypeOption) {
-  if (option.unavailable || props.disabled) return
+  if (props.disabled) return
   const newField = createTypedField(option.type, NEW_FIELD_LABELS[option.type])
   addField(newField)
   selectedFieldId.value = newField.id
@@ -403,17 +452,13 @@ function handleReset() {
               variant="outline"
               size="sm"
               class="h-auto py-3 flex flex-col items-center gap-1"
-              :disabled="disabled || fieldType.unavailable"
-              :title="fieldType.unavailable ? 'Disponible próximamente' : undefined"
+              :disabled="disabled"
               @click="addNewField(fieldType)"
             >
               <component :is="fieldType.icon" class="w-5 h-5" />
               <span class="text-xs">{{ fieldType.label }}</span>
             </Button>
           </div>
-          <p class="text-xs text-muted-foreground">
-            Los campos de archivo estarán disponibles próximamente.
-          </p>
         </CardContent>
       </Card>
 
@@ -500,6 +545,7 @@ function handleReset() {
                   <ChevronDown class="w-4 h-4" />
                 </Button>
                 <Button
+                  v-if="canDuplicate(field)"
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8"
@@ -510,6 +556,7 @@ function handleReset() {
                   <Copy class="w-4 h-4" />
                 </Button>
                 <Button
+                  v-if="canHide(field)"
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8"
@@ -521,6 +568,7 @@ function handleReset() {
                   <Eye v-else class="w-4 h-4" />
                 </Button>
                 <Button
+                  v-if="canDelete(field)"
                   variant="ghost"
                   size="icon"
                   class="h-8 w-8 text-destructive hover:text-destructive"
@@ -530,6 +578,11 @@ function handleReset() {
                 >
                   <Trash2 class="w-4 h-4" />
                 </Button>
+                <Lock
+                  v-if="!canDelete(field)"
+                  class="w-4 h-4 mx-2 text-muted-foreground shrink-0"
+                  aria-hidden="true"
+                />
               </div>
             </li>
           </ul>
@@ -550,6 +603,9 @@ function handleReset() {
       <DialogContent class="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Configurar campo</DialogTitle>
+          <p v-if="coreNote(selectedField)" class="text-xs text-muted-foreground">
+            {{ coreNote(selectedField) }}
+          </p>
         </DialogHeader>
 
         <Tabs v-model="activeTab" class="w-full">
@@ -598,14 +654,22 @@ function handleReset() {
               />
             </div>
 
-            <!-- Required -->
-            <div class="flex items-center justify-between">
+            <!-- Required. Withheld on the irreducible core fields: the server
+                 rejects making them optional, so there is nothing to offer. -->
+            <div v-if="canBeOptional(selectedField)" class="flex items-center justify-between">
               <Label for="field-required" class="cursor-pointer">Campo requerido</Label>
               <Checkbox
                 id="field-required"
                 :checked="selectedField.required"
                 @update:checked="setRequired(selectedField, $event)"
               />
+            </div>
+            <div
+              v-else
+              class="flex items-center gap-2 text-sm text-muted-foreground"
+            >
+              <Lock class="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>Campo siempre obligatorio</span>
             </div>
 
             <!-- Width -->
@@ -674,8 +738,9 @@ function handleReset() {
               </Button>
             </div>
 
-            <!-- File settings: only reachable for schemas that already have
-                 a file field, since the palette entry is disabled (KAN-59). -->
+            <!-- File settings. The platform caps these regardless of what is
+                 configured here: 25 MB per file and 10 files per field, in
+                 server/utils/inscription-uploads.ts. -->
             <div v-if="selectedField.type === 'file'" class="space-y-3">
               <div class="space-y-2">
                 <Label for="file-accept">Tipos de archivo aceptados</Label>

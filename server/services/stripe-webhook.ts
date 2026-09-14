@@ -4,6 +4,8 @@ import { sendEnrollmentEmail } from '~~/server/utils/email'
 // Relative on purpose: vitest does not resolve Nitro's `~~/` alias, and unlike
 // the email util this one is exercised rather than mocked in the tests.
 import {
+  collectUploadPaths,
+  confirmInscriptionUploads,
   markPendingFormResponsesConsumed,
   persistParticipantFormResponses,
   readPendingFormResponses,
@@ -107,6 +109,49 @@ export async function handleEnrollment(admin: SupabaseAdmin, evt: Stripe.Event, 
     const submission = await readPendingFormResponses(admin, draftId)
     if (submission) {
       await persistParticipantFormResponses(admin, participantId, submission)
+
+      // ── Confirm the uploaded files (KAN-49) ────────────────────────────────
+      //
+      // This is the only moment on the paid path where the participant row
+      // exists, so it is the only moment the files a participant uploaded
+      // before Checkout can be attached to it. Until it runs they are still
+      // `pending` in `inscription_uploads` and
+      // `sweep_orphan_inscription_uploads` marks them purgeable after 24 hours
+      // — which would leave a PAID inscription whose answers point at deleted
+      // objects. The same call purges what the participant picked and then
+      // discarded, hence calling it even for an empty path list.
+      //
+      // Failure policy: let it throw, so Stripe retries. That is the same
+      // reasoning as the answer write above and it holds because every write in
+      // this handler is idempotent — `enroll_participant_paid` returns the
+      // existing participant for a session it has seen, the answers are an
+      // upsert on the unique pair, and `confirm_inscription_uploads` filters on
+      // `confirmed_at IS NULL` so a redelivery is a no-op for rows already
+      // confirmed. A retry therefore repairs a failed confirmation instead of
+      // duplicating a successful one, and the draft is only stamped consumed
+      // afterwards so a retry can still read it.
+      //
+      // The one absorbed case is an empty path list: nothing the answers
+      // reference is at risk, only the early purge of discarded uploads, which
+      // the orphan sweep performs anyway. Making Stripe redeliver a paid event
+      // over that would be disproportionate.
+      const uploadPaths = collectUploadPaths(submission.responses)
+      try {
+        await confirmInscriptionUploads(admin, {
+          contestId: submission.contestId,
+          userId: m.user_id,
+          participantId,
+          paths: uploadPaths,
+        })
+      } catch (e) {
+        console.error(
+          `[webhook] uploads not confirmed for participant ${participantId} ` +
+          `(contest ${submission.contestId}, ${uploadPaths.length} file(s)):`,
+          (e as Error)?.message,
+        )
+        if (uploadPaths.length > 0) throw e
+      }
+
       await markPendingFormResponsesConsumed(admin, draftId)
     } else {
       // The draft is gone (pruned, or its schema was deleted). Retrying cannot

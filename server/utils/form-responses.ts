@@ -9,6 +9,22 @@
 //
 // Everything below the query wrapper is pure so it can be unit-tested without
 // a database.
+//
+// ── Why the participant row is part of the join (KAN-58) ─────────────────────
+// Since KAN-56 the core fields (name, surname, birthdate, DNI, country, phone,
+// email) are ordinary schema entries with a reserved `core.` id — so the
+// schema DECLARES them — but their values never travel in `responses_json`:
+// they arrive as their own keys in the enrolment body and land in typed
+// `participants` columns, because `enroll_participant`'s age guards and the
+// per-category age filter read those columns. `prepareFormSubmission` filters
+// them out of the validated bag on purpose (validating them against
+// `responses` rejected every inscription for an empty required field).
+//
+// The consequence for this module: resolving a core entry against
+// `responses[field.id]` can only ever yield an empty cell, and the organizer's
+// viewer showed name, surname and birthdate blank. Core entries are therefore
+// read from the participant's own columns, and only the organization's own
+// questions come from `responses_json`.
 
 import type {
   FormField,
@@ -18,6 +34,7 @@ import type {
   FormResponses,
   FormResponseValue,
 } from '../../shared/inscription-form'
+import { CORE_FIELD_DEFINITIONS, coreFieldColumn } from '../../shared/inscription-form-core'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shapes
@@ -54,6 +71,60 @@ export interface FormSchemaRow {
   id: string
   version: number
   schema_json: unknown
+}
+
+/**
+ * A `participants` row narrowed to the columns the core schema entries read.
+ *
+ * Every column is optional so a caller that only holds ids still type-checks:
+ * a missing column simply leaves that core entry empty, which is the
+ * pre-KAN-58 behaviour rather than a crash.
+ */
+export interface ParticipantCoreRow {
+  id: string
+  first_name?: string | null
+  last_name?: string | null
+  birthdate?: string | null
+  dni?: string | null
+  country?: string | null
+  phone?: string | null
+  email?: string | null
+}
+
+/**
+ * The select list for the participant query, derived from the core catalogue
+ * so a new core field cannot be added in `shared/` and forgotten here.
+ */
+export const PARTICIPANT_CORE_COLUMNS: string = [
+  'id',
+  ...CORE_FIELD_DEFINITIONS.map(d => d.column),
+].join(', ')
+
+/**
+ * A participant to resolve. A bare id is accepted — it just means no core
+ * values are available — so callers that genuinely have nothing else (a
+ * one-off lookup, a test) do not have to fabricate a row.
+ */
+export type ParticipantRef = string | ParticipantCoreRow
+
+function refId(ref: ParticipantRef): string {
+  return typeof ref === 'string' ? ref : ref.id
+}
+
+function refRow(ref: ParticipantRef): ParticipantCoreRow | undefined {
+  return typeof ref === 'string' ? undefined : ref
+}
+
+/** Narrow an untyped row from supabase-js into `ParticipantCoreRow`. */
+export function toParticipantCoreRow(row: Record<string, unknown>): ParticipantCoreRow {
+  const out: ParticipantCoreRow = { id: String(row.id) }
+  for (const definition of CORE_FIELD_DEFINITIONS) {
+    const raw = row[definition.column]
+    if (raw === undefined || raw === null) continue
+    ;(out as Record<string, unknown>)[definition.column] =
+      typeof raw === 'string' ? raw : String(raw)
+  }
+  return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,6 +235,33 @@ export function toDisplayValue(field: FormField, value: FormResponseValue | unde
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The value of a core schema entry, read from the participant's own column.
+ *
+ * Returns `undefined` for anything that is not a core entry, which is how the
+ * caller tells "not a core field" from "core field with an empty column".
+ * A core field whose column is empty falls back to `responses[field.id]`: it
+ * should never be populated, but a row written by an older client would
+ * otherwise be silently dropped, and losing a participant's answer is the one
+ * outcome this module exists to prevent.
+ */
+function coreColumnValue(
+  participant: ParticipantCoreRow | undefined,
+  field: FormField,
+): FormResponseValue | undefined {
+  if (field.isCore !== true && coreFieldColumn(field.id) === null) return undefined
+  const column = coreFieldColumn(field.id)
+  // `isCore` on the wire is advisory; only an id in the catalogue names a
+  // column. An unknown id flagged `isCore` is treated as an ordinary answer.
+  if (!column) return undefined
+  if (!participant) return undefined
+
+  const raw = (participant as Record<string, unknown>)[column]
+  if (raw === undefined || raw === null) return null
+  if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean') return raw
+  return String(raw)
+}
+
+/**
  * Map a response payload onto the fields of the schema it was answered against.
  *
  * Every schema field is returned, in `order`, even when unanswered — an empty
@@ -171,14 +269,25 @@ export function toDisplayValue(field: FormField, value: FormResponseValue | unde
  * absent from the schema (a field deleted from a later draft, or data written
  * by an older client) are appended rather than dropped, labelled by their id,
  * because silently losing a participant's answer is worse than an ugly label.
+ *
+ * `participant` carries the typed `participants` columns that back the core
+ * entries (KAN-56/58). Omit it and core entries resolve empty, exactly as they
+ * did before — no caller breaks, it just sees less.
  */
-export function resolveResponses(fields: FormField[], responses: FormResponses): ResolvedFormField[] {
+export function resolveResponses(
+  fields: FormField[],
+  responses: FormResponses,
+  participant?: ParticipantCoreRow,
+): ResolvedFormField[] {
   const ordered = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
   const known = new Set<string>()
 
   const resolved: ResolvedFormField[] = ordered.map((field) => {
     known.add(field.id)
-    const value = (responses[field.id] ?? null) as FormResponseValue
+    const fromColumn = coreColumnValue(participant, field)
+    // `??` and not `||`: an empty column falls through to the response bag,
+    // but a legitimately falsy answer (`false`, `0`) is kept.
+    const value = (fromColumn ?? responses[field.id] ?? null) as FormResponseValue
     return {
       id: field.id,
       label: field.label ?? field.id,
@@ -215,7 +324,7 @@ export function resolveResponses(fields: FormField[], responses: FormResponses):
  * empty `fields` array — they must not disappear from the organizer's table.
  */
 export function buildParticipantResponses(
-  participantIds: string[],
+  participants: ParticipantRef[],
   responseRows: FormResponseRow[],
   schemaRows: FormSchemaRow[],
 ): ParticipantFormResponses[] {
@@ -235,9 +344,13 @@ export function buildParticipantResponses(
     }
   }
 
-  return participantIds.map((participantId) => {
+  return participants.map((ref) => {
+    const participantId = refId(ref)
     const row = latestByParticipant.get(participantId)
     if (!row) {
+      // Enrolled before the contest had a form, or a contest with none at all.
+      // An empty list, never a missing entry: the organizer's table is driven
+      // by this result and a participant must not vanish from it (KAN-58).
       return {
         participantId,
         formSchemaId: null,
@@ -253,7 +366,11 @@ export function buildParticipantResponses(
       formSchemaId: row.form_schema_id,
       schemaVersion: schema?.version ?? null,
       submittedAt: row.created_at,
-      fields: resolveResponses(schema?.fields ?? [], parseResponses(row.responses_json)),
+      fields: resolveResponses(
+        schema?.fields ?? [],
+        parseResponses(row.responses_json),
+        refRow(ref),
+      ),
     }
   })
 }
@@ -290,14 +407,23 @@ async function runQuery(promise: PromiseLike<QueryResult<Record<string, unknown>
 }
 
 /**
- * Three queries, always: participants of the contest, their response rows, and
- * the distinct schemas those rows point at. No per-participant round-trip.
+ * Two queries, whatever the participant count: their response rows, and the
+ * distinct schemas those rows point at. The participants themselves are the
+ * caller's single third query — `loadContestParticipants` for the contest-wide
+ * endpoint, the per-participant lookup the detail endpoint already runs — so
+ * the whole viewer is three round-trips for 1 participant and three for 500.
+ *
+ * The core values ride along on `participants`, which is why this takes rows
+ * and not ids: fetching them here would add a fourth query for a contest whose
+ * participants the caller has already read.
  */
 export async function loadFormResponsesForParticipants(
   client: FormResponsesClient,
-  participantIds: string[],
+  participants: ParticipantRef[],
 ): Promise<ParticipantFormResponses[]> {
-  if (participantIds.length === 0) return []
+  if (participants.length === 0) return []
+
+  const participantIds = participants.map(refId)
 
   const responseRows = (await runQuery(
     client
@@ -318,17 +444,21 @@ export async function loadFormResponsesForParticipants(
       )) as unknown as FormSchemaRow[])
     : []
 
-  return buildParticipantResponses(participantIds, responseRows, schemaRows)
+  return buildParticipantResponses(participants, responseRows, schemaRows)
 }
 
-/** Participant ids of a contest, ordered, for the contest-wide endpoint. */
-export async function loadContestParticipantIds(
+/**
+ * Participants of a contest with the columns that back the core schema
+ * entries. One query, whatever the contest size — this is the third and last
+ * round-trip of the contest-wide endpoint.
+ */
+export async function loadContestParticipants(
   client: FormResponsesClient,
   contestId: string,
-): Promise<string[]> {
+): Promise<ParticipantCoreRow[]> {
   const rows = await runQuery(
-    client.from('participants').select('id').eq('contest_id', contestId),
+    client.from('participants').select(PARTICIPANT_CORE_COLUMNS).eq('contest_id', contestId),
     'participants',
   )
-  return rows.map(r => String(r.id))
+  return rows.map(toParticipantCoreRow)
 }

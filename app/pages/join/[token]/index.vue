@@ -21,6 +21,12 @@ import { DIAL_CODES, findCountryByName } from '@/utils/countries'
 import { validateDni } from '@/utils/dni'
 import DynamicFormRenderer from '@/components/inscription/DynamicFormRenderer.vue'
 import { useInscriptionForm } from '~/composables/useInscriptionForm'
+import { cn } from '@/utils'
+import {
+  coreFieldColumn,
+  isCoreFieldId,
+  resolvePublishedFields,
+} from '../../../../shared/inscription-form-core'
 import type { FormField, FormResponses, PublishedFormSchema } from '~/types/inscription-form'
 
 definePageMeta({
@@ -171,9 +177,8 @@ watch([computedAge, () => form.category_id], () => {
 })
 
 // ── Configurable form (KAN-45) ───────────────────────────────────────────
-// Additive: everything above this block is the fixed form and keeps working
-// untouched. If this fetch fails, or the contest has no published schema,
-// `dynamicFields` stays empty and the page behaves exactly as before.
+// The form is one ordered list driven by the published schema. See the
+// `schemaFields` block below for how core entries and custom questions meet.
 const { data: formSchemaData, error: formSchemaError } = await useFetch<PublishedFormSchema>(
   () => `/api/public/inscriptions/${token.value}/form-schema`,
   { server: true },
@@ -187,20 +192,134 @@ watchEffect(() => {
   }
 })
 
-// The endpoint returns the *whole* published form, core entries included
-// (KAN-56). The fixed block above already renders those, so only the
-// organizer's own questions go to the renderer — otherwise nombre, apellidos
-// and fecha de nacimiento would appear twice.
+// The endpoint returns the WHOLE published form — the organization's own
+// questions and the core fields as `core.*` entries — in the order it was
+// published. The page renders that single ordered list, which is the point of
+// KAN-56: the organization controls order and visibility of every field, not
+// only of its own.
 //
-// Rendering one unified list from this schema, and retiring the fixed block,
-// is the KAN-45 follow-up: the fixed inputs carry the age filter, the DNI
-// check, PhoneInput's E.164 handling and the profile autofill, and none of
-// that moves without its own change.
+// The specialised controls are NOT thrown away. A `core.*` entry renders the
+// control that already exists for that field — DatePicker with the
+// parseDate/getLocalTimeZone bridge, PhoneInput with the dial derived from the
+// country, CountrySelect, the DNI input backed by `validateDni`. Only order
+// and visibility move to the schema; the proven validation stays.
+//
+// Core VALUES keep living on `form` and travel at the ROOT of the request
+// body (`first_name`, `birthdate`, …). They must never enter `responses`: the
+// server validates them as typed columns and `responses_json` stores only the
+// organization's own questions. Putting them in `responses` 400s every
+// inscription.
+
+const schemaFields = computed<FormField[]>(() => {
+  const fields = formSchemaData.value?.fields
+  // A failed fetch, or a contest that never published a schema, falls back to
+  // the default catalogue — which is today's form, field for field — so the
+  // participant still gets a usable form rather than an empty card.
+  return fields && fields.length > 0 ? fields : resolvePublishedFields(null)
+})
+
+function isCoreField(field: FormField): boolean {
+  return field.isCore === true || isCoreFieldId(field.id)
+}
+
+/** Everything the participant actually sees, in the published order. */
+const orderedFields = computed<FormField[]>(() =>
+  [...schemaFields.value]
+    .filter(f => !f.hidden)
+    .sort((a, b) => a.order - b.order),
+)
+
+/** Only the organization's own questions reach `responses_json`. */
 const dynamicFields = computed<FormField[]>(
-  () => (formSchemaData.value?.fields ?? []).filter(f => !f.isCore),
+  () => schemaFields.value.filter(f => !isCoreField(f)),
 )
 const formSchemaId = computed<string | null>(() => formSchemaData.value?.id ?? null)
 const hasDynamicFields = computed(() => dynamicFields.value.length > 0)
+
+// ── Core field presentation ──────────────────────────────────────────────
+
+/**
+ * Widths that reproduce today's layout for a contest with no published
+ * schema. A `width` set by the organization always wins; this is only the
+ * fallback for the core catalogue, which declares none.
+ */
+const CORE_FIELD_WIDTHS: Record<string, 'full' | 'half' | 'third'> = {
+  'core.first_name': 'half',
+  'core.last_name': 'half',
+  'core.birthdate': 'half',
+  'core.dni': 'half',
+}
+
+function widthClassFor(field: FormField): string {
+  switch (field.width ?? CORE_FIELD_WIDTHS[field.id] ?? 'full') {
+    case 'half': return 'sm:col-span-3'
+    case 'third': return 'sm:col-span-2'
+    default: return 'sm:col-span-6'
+  }
+}
+
+/** Read a core field's value out of `form`, by its `participants` column. */
+function coreText(fieldId: string): string {
+  const column = coreFieldColumn(fieldId)
+  return column ? String(form[column] ?? '') : ''
+}
+
+function setCoreText(fieldId: string, value: string | number) {
+  const column = coreFieldColumn(fieldId)
+  if (column) form[column] = String(value ?? '')
+}
+
+/** Core ids the published schema actually shows. */
+const visibleCoreIds = computed(
+  () => new Set(orderedFields.value.filter(f => coreFieldColumn(f.id)).map(f => f.id)),
+)
+
+/**
+ * What to send for an optional core field.
+ *
+ * A field the organization hid is one it chose not to collect, so nothing is
+ * sent for it: the profile autofill writes to `form` regardless of the schema
+ * and would otherwise smuggle in a value the contest never asked for. All four
+ * of these are `.nullable().optional()` on the server; the three irreducible
+ * fields are never hideable and always carry their value.
+ */
+function optionalCoreValue(fieldId: string): string | null {
+  if (!visibleCoreIds.value.has(fieldId)) return null
+  return coreText(fieldId).trim() || null
+}
+
+/**
+ * Required core fields left empty.
+ *
+ * Driven by the schema, so an organization that marked `core.dni` optional
+ * stops blocking on it. The three irreducible fields always come back
+ * `required`, so they are always covered.
+ */
+const missingRequiredCore = computed<FormField[]>(() =>
+  orderedFields.value.filter((field) => {
+    if (!coreFieldColumn(field.id) || !field.required) return false
+    return !coreText(field.id).trim()
+  }),
+)
+
+// ── File uploads (KAN-41) ────────────────────────────────────────────────
+// The renderer uploads each file as it is chosen and keeps only the
+// `FormFileReference` the server returns. Submit is held while bytes fly.
+
+const uploadUrl = computed(() => `/api/public/inscriptions/${token.value}/upload`)
+const uploadHeaders = computed<Record<string, string>>(() => ({
+  Authorization: `Bearer ${authStore.session?.access_token ?? ''}`,
+}))
+
+const uploadingFields = ref<Set<string>>(new Set())
+const isUploadingFiles = computed(() => uploadingFields.value.size > 0)
+
+function onUploadingChange(fieldId: string, uploading: boolean) {
+  const next = new Set(uploadingFields.value)
+  if (uploading) next.add(fieldId)
+  else next.delete(fieldId)
+  uploadingFields.value = next
+}
 
 const {
   responses: dynamicResponses,
@@ -231,13 +350,36 @@ function onDynamicFieldChange(fieldId: string) {
   if (dynamicErrors.value[fieldId]) delete dynamicErrors.value[fieldId]
 }
 
-/** Errors paired with their field label, in the order the fields are shown. */
-const dynamicErrorList = computed(() =>
-  dynamicFields.value
-    .filter(f => !f.hidden && dynamicErrors.value[f.id])
-    .sort((a, b) => a.order - b.order)
-    .map(f => ({ id: f.id, label: f.label, message: dynamicErrors.value[f.id] })),
-)
+// Each custom question gets its own renderer instance so that a core field
+// can sit between two of them and the published order still holds.
+//
+// The width already lives on the wrapping grid cell, so the field handed to
+// the renderer is forced to `full`: otherwise a `half` field would be halved
+// twice, once by the cell and again inside the renderer's own grid. Memoised
+// so the child's `fields` prop keeps a stable identity between renders.
+const rendererFieldsById = computed(() => {
+  const map = new Map<string, FormField[]>()
+  for (const field of orderedFields.value) {
+    if (isCoreField(field)) continue
+    map.set(field.id, [{ ...field, width: 'full', order: 0 } as FormField])
+  }
+  return map
+})
+
+function rendererFieldsFor(field: FormField): FormField[] {
+  return rendererFieldsById.value.get(field.id) ?? []
+}
+
+/**
+ * One field's slice of the answers.
+ *
+ * Each renderer emits back every key it holds, so handing it only its own
+ * field keeps one instance from overwriting another's answer with a stale
+ * snapshot.
+ */
+function responseSliceFor(fieldId: string): FormResponses {
+  return { [fieldId]: dynamicResponses[fieldId] ?? null }
+}
 
 // ── Submit ───────────────────────────────────────────────────────────────
 const submitting = ref(false)
@@ -253,11 +395,27 @@ async function submit() {
     await navigateTo(loginHref.value)
     return
   }
+  // The irreducible floor, unchanged: the server and the SQL age guards
+  // require these three whatever the schema says.
   if (!form.category_id || !form.first_name || !form.last_name || !form.birthdate) {
     toast.error('Completa los campos obligatorios.')
     return
   }
-  if (form.dni) {
+  // Anything else the organization marked required — `core.dni` and friends
+  // are optional or hidden unless the published schema asks for them.
+  if (missingRequiredCore.value.length) {
+    const names = missingRequiredCore.value.map(f => f.label).join(', ')
+    toast.error(`Completa los campos obligatorios: ${names}.`)
+    return
+  }
+  if (isUploadingFiles.value) {
+    toast.error('Espera a que terminen de subirse los archivos.')
+    return
+  }
+  // Only when the contest actually asks for it: the autofill fills `form.dni`
+  // from the profile even if the schema hides the field, and blocking submit
+  // on an input the participant cannot see would be a dead end.
+  if (visibleCoreIds.value.has('core.dni') && form.dni) {
     const dniResult = validateDni(form.dni)
     if (!dniResult.valid) {
       toast.error(dniResult.error || 'DNI/NIE no válido')
@@ -278,10 +436,10 @@ async function submit() {
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
       birthdate: form.birthdate,
-      dni: form.dni.trim() || null,
-      country: form.country.trim() || null,
-      email: form.email.trim() || null,
-      phone: form.phone.trim() || null,
+      dni: optionalCoreValue('core.dni'),
+      country: optionalCoreValue('core.country'),
+      email: optionalCoreValue('core.email'),
+      phone: optionalCoreValue('core.phone'),
       // Only sent when the contest actually has a published form, so a
       // contest without one posts a byte-identical body to before.
       ...(hasDynamicFields.value && formSchemaId.value
@@ -503,46 +661,110 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
           </CardHeader>
           <CardContent>
             <form @submit.prevent="submit" class="space-y-4">
-              <div class="grid grid-cols-2 gap-3">
-                <div class="space-y-1.5">
-                  <Label for="first_name">Nombre *</Label>
-                  <Input id="first_name" v-model="form.first_name" required />
-                </div>
-                <div class="space-y-1.5">
-                  <Label for="last_name">Apellidos *</Label>
-                  <Input id="last_name" v-model="form.last_name" required />
-                </div>
-              </div>
+              <!-- One ordered list, driven by the published schema (KAN-45).
+                   A `core.*` entry renders its own specialised control; every
+                   other entry goes through DynamicFormRenderer. A contest
+                   without a published schema falls back to the default core
+                   catalogue, which is this same form as before. -->
+              <div class="grid grid-cols-1 sm:grid-cols-6 gap-x-3 gap-y-4">
+                <div
+                  v-for="field in orderedFields"
+                  :key="field.id"
+                  :class="cn('grid content-start gap-1.5', widthClassFor(field))"
+                >
+                  <!-- Fecha de nacimiento: feeds `form.birthdate`, and with it
+                       `computedAge` and the per-category age filter. -->
+                  <template v-if="field.id === 'core.birthdate'">
+                    <Label :for="field.id">
+                      {{ field.label }}<span v-if="field.required"> *</span>
+                    </Label>
+                    <DatePicker
+                      :id="field.id"
+                      v-model="birthdateValue"
+                      :placeholder="field.placeholder || 'Selecciona tu fecha'"
+                    />
+                    <p v-if="computedAge != null" class="text-xs text-muted-foreground">
+                      Edad al inicio del concurso: <strong>{{ computedAge }}</strong> años
+                    </p>
+                  </template>
 
-              <div class="grid grid-cols-2 gap-3">
-                <div class="space-y-1.5">
-                  <Label>Fecha de nacimiento *</Label>
-                  <DatePicker v-model="birthdateValue" placeholder="Selecciona tu fecha" />
-                  <p v-if="computedAge != null" class="text-xs text-muted-foreground">
-                    Edad al inicio del concurso: <strong>{{ computedAge }}</strong> años
+                  <!-- DNI / NIE / Pasaporte, validated by `validateDni`. -->
+                  <template v-else-if="field.id === 'core.dni'">
+                    <Label :for="field.id">
+                      {{ field.label }}<span v-if="field.required"> *</span>
+                    </Label>
+                    <Input
+                      :id="field.id"
+                      v-model="form.dni"
+                      :aria-invalid="!!dniError"
+                      :class="dniError ? 'border-destructive' : ''"
+                    />
+                    <p v-if="dniError" class="text-xs text-destructive" role="alert">
+                      {{ dniError }}
+                    </p>
+                  </template>
+
+                  <!-- País: stores ISO alpha-2 or the Spanish name. -->
+                  <template v-else-if="field.id === 'core.country'">
+                    <Label :for="field.id">
+                      {{ field.label }}<span v-if="field.required"> *</span>
+                    </Label>
+                    <CountrySelect
+                      :id="field.id"
+                      v-model="form.country"
+                      placeholder="Selecciona país…"
+                    />
+                  </template>
+
+                  <!-- Teléfono: returns E.164, dial derived from the country. -->
+                  <template v-else-if="field.id === 'core.phone'">
+                    <Label :for="field.id">
+                      {{ field.label }}<span v-if="field.required"> *</span>
+                    </Label>
+                    <PhoneInput
+                      :id="field.id"
+                      v-model="form.phone"
+                      :default-dial="defaultDial"
+                      placeholder="600 11 22 33"
+                    />
+                  </template>
+
+                  <!-- Remaining core fields: nombre, apellidos, email. -->
+                  <template v-else-if="isCoreField(field)">
+                    <Label :for="field.id">
+                      {{ field.label }}<span v-if="field.required"> *</span>
+                    </Label>
+                    <Input
+                      :id="field.id"
+                      :type="field.type === 'email' ? 'email' : 'text'"
+                      :placeholder="field.placeholder"
+                      :model-value="coreText(field.id)"
+                      @update:model-value="setCoreText(field.id, $event)"
+                    />
+                  </template>
+
+                  <!-- The organization's own question. -->
+                  <DynamicFormRenderer
+                    v-else
+                    :fields="rendererFieldsFor(field)"
+                    :model-value="responseSliceFor(field.id)"
+                    :errors="dynamicErrors"
+                    :disabled="submitting"
+                    :upload-url="uploadUrl"
+                    :upload-headers="uploadHeaders"
+                    @update:model-value="onDynamicUpdate"
+                    @field-change="onDynamicFieldChange"
+                    @field-blur="validateDynamicField"
+                    @uploading-change="onUploadingChange"
+                  />
+
+                  <p
+                    v-if="field.description && isCoreField(field) && field.id !== 'core.birthdate'"
+                    class="text-xs text-muted-foreground"
+                  >
+                    {{ field.description }}
                   </p>
                 </div>
-                <div class="space-y-1.5">
-                  <Label for="dni">DNI / Documento</Label>
-                  <Input id="dni" v-model="form.dni" :class="dniError ? 'border-destructive' : ''" />
-                  <p v-if="dniError" class="text-xs text-destructive">{{ dniError }}</p>
-                </div>
-              </div>
-
-              <div class="space-y-4">
-                <div class="space-y-1.5">
-                  <Label>País</Label>
-                  <CountrySelect v-model="form.country" placeholder="Selecciona país…" />
-                </div>
-                <div class="space-y-1.5">
-                  <Label>Teléfono</Label>
-                  <PhoneInput v-model="form.phone" :default-dial="defaultDial" placeholder="600 11 22 33" />
-                </div>
-              </div>
-
-              <div class="space-y-1.5">
-                <Label for="email">Email de contacto</Label>
-                <Input id="email" v-model="form.email" type="email" />
               </div>
 
               <!-- Category -->
@@ -593,46 +815,18 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
                 </div>
               </div>
 
-              <!-- Configurable fields (KAN-45). Rendered only when the
-                   organization has published a schema; otherwise nothing here
-                   appears and the form is exactly the one above. -->
-              <div v-if="hasDynamicFields" class="space-y-4 pt-2 border-t">
-                <div class="space-y-1">
-                  <h3 class="text-sm font-medium">Información adicional</h3>
-                  <p class="text-xs text-muted-foreground">
-                    Preguntas específicas de este concurso.
-                  </p>
-                </div>
-
-                <DynamicFormRenderer
-                  :fields="dynamicFields"
-                  :model-value="dynamicResponses"
-                  :disabled="submitting"
-                  @update:model-value="onDynamicUpdate"
-                  @field-change="onDynamicFieldChange"
-                  @field-blur="validateDynamicField"
-                />
-
-                <ul
-                  v-if="dynamicErrorList.length"
-                  class="space-y-1 text-xs text-destructive"
-                >
-                  <li v-for="e in dynamicErrorList" :key="e.id">
-                    <span class="font-medium">{{ e.label }}:</span> {{ e.message }}
-                  </li>
-                </ul>
-              </div>
-
               <Button
                 type="submit"
                 class="w-full"
-                :disabled="submitting || !form.category_id"
+                :disabled="submitting || isUploadingFiles || !form.category_id"
               >
-                <Loader2 v-if="submitting" class="w-4 h-4 mr-2 animate-spin" />
+                <Loader2 v-if="submitting || isUploadingFiles" class="w-4 h-4 mr-2 animate-spin" />
                 <Trophy v-else class="w-4 h-4 mr-2" />
-                {{ submitting
-                  ? (requiresPayment ? 'Redirigiendo al pago…' : 'Enviando…')
-                  : (requiresPayment ? 'Pagar e inscribirse' : 'Confirmar inscripción') }}
+                {{ isUploadingFiles
+                  ? 'Subiendo archivos…'
+                  : submitting
+                    ? (requiresPayment ? 'Redirigiendo al pago…' : 'Enviando…')
+                    : (requiresPayment ? 'Pagar e inscribirse' : 'Confirmar inscripción') }}
               </Button>
             </form>
           </CardContent>
