@@ -189,3 +189,179 @@ export async function handleEnrollment(admin: SupabaseAdmin, evt: Stripe.Event, 
 
   return { participant_id: data }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dispatch + idempotency (KAN-51)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Lives here rather than in `server/api/stripe/webhook.post.ts` so it can be
+// unit-tested: vitest resolves neither Nitro's `~~/` alias nor its auto-imports,
+// which is why every tested unit in this repo is a service or a util and the
+// route handlers stay thin. The route keeps signature verification — the one
+// step that must own the raw body — and maps the outcome to HTTP.
+
+// Relative on purpose, same reason as the imports at the top of this file.
+import {
+  claimStripeEvent,
+  releaseStripeEvent,
+  wasStripeEventProcessed,
+} from '../utils/stripe-idempotency'
+
+/**
+ * Event types this endpoint acts on.
+ *
+ * Anything outside the set is acknowledged and deliberately NOT recorded in
+ * `processed_stripe_events`: the ledger exists to make handlers idempotent and
+ * auditable, and a row for an event nobody handles carries no information while
+ * growing the table with every `invoice.*` and `payment_intent.*` Stripe sends.
+ */
+export const HANDLED_EVENT_TYPES = new Set<string>([
+  'account.updated',
+  'charge.refunded',
+  'charge.refund.updated',
+  'checkout.session.completed',
+])
+
+export class StripeWebhookError extends Error {
+  constructor(
+    readonly code: 'idempotency_lookup_failed' | 'idempotency_lock_failed' | 'handler_failed',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'StripeWebhookError'
+  }
+}
+
+/**
+ * Connect onboarding status sync.
+ *
+ * Absolute values copied from the account object, so a redelivery is a no-op
+ * rather than a double-apply. Matching zero rows is normal — the account may
+ * not be ours — and is not an error.
+ */
+export async function syncConnectAccount(admin: SupabaseAdmin, acc: Stripe.Account) {
+  // supabase-js resolves with `{ data, error }` and never throws, so the error
+  // is read rather than caught. The previous try/catch here was dead code.
+  const { error } = await admin.from('organizations').update({
+    stripe_onboarding_done: !!acc.details_submitted,
+    stripe_charges_enabled: !!acc.charges_enabled,
+    stripe_payouts_enabled: !!acc.payouts_enabled,
+  }).eq('stripe_account_id', acc.id)
+
+  if (error) throw new Error(`organizations.update: ${error.message}`)
+  return { synced: true }
+}
+
+/**
+ * Refund sync.
+ *
+ * Every written value is derived from the charge itself (`amount_refunded`,
+ * `amount`), never incremented, so reprocessing leaves the row identical.
+ * `payment_status` stays inside the allowed enum.
+ */
+export async function syncRefund(admin: SupabaseAdmin, charge: Stripe.Charge, paymentIntent: string) {
+  const refunded = charge.amount_refunded ?? 0
+  const total = charge.amount ?? 0
+  const fullyRefunded = refunded > 0 && refunded >= total
+
+  const { error } = await admin.from('participants').update({
+    amount_refunded_cents: refunded,
+    refunded_at: fullyRefunded ? new Date().toISOString() : null,
+    payment_status: fullyRefunded ? 'refunded' : (refunded > 0 ? 'partial_refund' : 'paid'),
+    stripe_refund_id: charge.refunds?.data?.[0]?.id ?? null,
+  }).eq('stripe_payment_intent_id', paymentIntent)
+
+  if (error) throw new Error(`participants.update: ${error.message}`)
+  return { refunded: true }
+}
+
+async function runCheckoutSession(admin: SupabaseAdmin, evt: Stripe.Event, session: Stripe.Checkout.Session) {
+  switch (session.metadata?.type) {
+    case 'enrollment':  return handleEnrollment(admin, evt, session)
+    case 'tickets':     return handleTicketsTopup(admin, evt, session)
+    case 'activations': return handleActivationsTopup(admin, evt, session)
+    // Default: bundle purchase — metadata carries the plan.
+    default:            return handleBundle(admin, evt, session)
+  }
+}
+
+/**
+ * Claims the event, dispatches it, and releases the claim if the handler fails.
+ *
+ * Before KAN-51 `account.updated` and the two refund types returned before
+ * reaching the claim, so only `checkout.session.completed` was protected and
+ * the other two left no trace in the ledger to reconstruct a payments incident
+ * from.
+ *
+ * @throws StripeWebhookError so the caller can answer 5xx and let Stripe retry.
+ */
+export async function processStripeEvent(admin: SupabaseAdmin, evt: Stripe.Event) {
+  let alreadyProcessed: boolean
+  try {
+    alreadyProcessed = await wasStripeEventProcessed(admin, evt.id)
+  } catch (e: any) {
+    // An unreadable ledger must not be mistaken for an empty one, or every
+    // retry re-runs the handler and re-credits balances.
+    throw new StripeWebhookError('idempotency_lookup_failed', e?.message ?? 'lookup failed')
+  }
+
+  if (alreadyProcessed) return { received: true as const, ignored: 'already_processed' }
+
+  if (!HANDLED_EVENT_TYPES.has(evt.type)) {
+    return { received: true as const, ignored: 'unhandled_event_type' }
+  }
+
+  let claim: Awaited<ReturnType<typeof claimStripeEvent>>
+  try {
+    claim = await claimStripeEvent(admin, evt.id, evt.type)
+  } catch (e: any) {
+    throw new StripeWebhookError('idempotency_lock_failed', e?.message ?? 'claim failed')
+  }
+
+  if (claim === 'already_processed') {
+    return { received: true as const, ignored: 'already_processed' }
+  }
+
+  try {
+    if (evt.type === 'account.updated') {
+      return { received: true as const, ...(await syncConnectAccount(admin, evt.data.object as Stripe.Account)) }
+    }
+
+    if (evt.type === 'charge.refunded' || evt.type === 'charge.refund.updated') {
+      const charge = evt.data.object as Stripe.Charge
+      const paymentIntent =
+        typeof charge.payment_intent === 'string'
+          ? charge.payment_intent
+          : charge.payment_intent?.id ?? null
+
+      if (!paymentIntent) {
+        // Not one of our charges: nothing to reconcile. Release the claim
+        // rather than keeping a ledger row for an event we did not act on,
+        // matching how an unhandled type is treated above.
+        await releaseStripeEvent(admin, evt.id)
+        return { received: true as const, ignored: 'no_payment_intent' }
+      }
+
+      return { received: true as const, ...(await syncRefund(admin, charge, paymentIntent)) }
+    }
+
+    const session = evt.data.object as Stripe.Checkout.Session
+    return { received: true as const, ...(await runCheckoutSession(admin, evt, session)) }
+  } catch (err: any) {
+    // Retry policy, decided in KAN-51 and now applied to every handled type:
+    // a failed handler answers 5xx so Stripe redelivers, and the claim is
+    // released so the redelivery can actually run.
+    //
+    // This is a deliberate change for the refund and account branches, which
+    // used to answer 200 after swallowing the failure:
+    //   * Answering 200 told Stripe the refund was recorded when it was not,
+    //     leaving the participant marked `paid` after a real refund with
+    //     nothing to reconcile it later.
+    //   * Both syncs write absolute values taken from the Stripe object, so a
+    //     redelivery repairs the row instead of double-applying. Retrying is
+    //     strictly safer than not retrying.
+    console.error(`[stripe webhook] handler failed for ${evt.type}:`, err?.message)
+    await releaseStripeEvent(admin, evt.id)
+    throw new StripeWebhookError('handler_failed', err?.message ?? 'handler failed')
+  }
+}
