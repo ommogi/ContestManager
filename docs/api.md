@@ -1,4 +1,4 @@
-# API Reference — ContestSaaS
+# API Reference — Contest Manager
 
 Stack: Nuxt 4 / Nitro · Supabase Auth · Zod validation · h3
 

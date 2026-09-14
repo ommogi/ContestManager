@@ -1,5 +1,6 @@
 import { Resend } from 'resend'
 import { serverSupabaseAdmin } from './supabase'
+import { appBaseUrl } from './app-url'
 
 function escapeHtml(str: string | null | undefined): string {
   if (!str) return ''
@@ -29,7 +30,7 @@ function getResend(): Resend | null {
  * while looking like a fix. Production sets RESEND_FROM, so this value is not
  * what it uses — it only decides how a misconfigured environment fails.
  */
-const DEFAULT_FROM = 'ContestSaas <noreply@contestsaas.app>'
+const DEFAULT_FROM = 'Contest Manager <noreply@contestsaas.app>'
 
 let senderWarningLogged = false
 
@@ -105,7 +106,7 @@ export interface WelcomeEmailPayload {
 }
 
 export async function sendWelcomeEmail(p: WelcomeEmailPayload) {
-  const subject = '¡Bienvenido a ContestSaas! 🎉'
+  const subject = '¡Bienvenido a Contest Manager! 🎉'
   const html = `
 <!doctype html>
 <html lang="es">
@@ -122,7 +123,7 @@ export async function sendWelcomeEmail(p: WelcomeEmailPayload) {
               Hola${p.first_name ? ' ' + escapeHtml(p.first_name) : ''},
             </p>
             <p style="margin:0 0 16px;font-size:15px;line-height:1.55;">
-              Bienvenido a <strong>ContestSaas</strong>. Estamos encantados de contar contigo.
+              Bienvenido a <strong>Contest Manager</strong>. Estamos encantados de contar contigo.
             </p>
             <p style="margin:0 0 24px;font-size:15px;line-height:1.55;color:#52525b;">
               Desde tu panel podrás crear concursos, gestionar participantes y seguir el desarrollo de tus eventos en tiempo real.
@@ -136,7 +137,7 @@ export async function sendWelcomeEmail(p: WelcomeEmailPayload) {
               </ol>
             </div>
             <p style="margin:0;">
-              <a href="${process.env.APP_BASE_URL || 'https://contestsaas.app'}/dashboard"
+              <a href="${appBaseUrl()}/dashboard"
                  style="display:inline-block;background:#18181b;color:#ffffff;text-decoration:none;font-weight:700;font-size:13px;letter-spacing:0.5px;padding:12px 22px;border-radius:10px;">
                 Ir al dashboard
               </a>
@@ -237,8 +238,8 @@ export async function sendJudgeInvitationEmail(p: JudgeInvitationEmailPayload) {
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
 
           <tr><td style="padding:32px 32px 24px;background:linear-gradient(135deg,#1e1b4b 0%,#312e81 45%,#064e3b 100%);text-align:center;">
-            <img src="${logoUrl}" alt="ContestSaas" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
-            <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a5b4fc;">ContestSaas</p>
+            <img src="${logoUrl}" alt="Contest Manager" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
+            <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a5b4fc;">Contest Manager</p>
             <h1 style="margin:0;font-size:22px;font-weight:800;line-height:1.2;color:#ffffff;">Te han invitado como jurado</h1>
           </td></tr>
 
@@ -540,8 +541,8 @@ export async function sendJudgePoolInvitationEmail(p: JudgePoolInvitationEmailPa
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
 
           <tr><td style="padding:32px 32px 24px;background:linear-gradient(135deg,#1e1b4b 0%,#312e81 45%,#064e3b 100%);text-align:center;">
-            <img src="${logoUrl}" alt="ContestSaas" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
-            <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a5b4fc;">ContestSaas</p>
+            <img src="${logoUrl}" alt="Contest Manager" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
+            <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a5b4fc;">Contest Manager</p>
             <h1 style="margin:0;font-size:22px;font-weight:800;line-height:1.2;color:#ffffff;">Te han invitado al pool de jurados</h1>
           </td></tr>
 

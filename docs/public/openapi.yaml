@@ -1,9 +1,9 @@
 openapi: 3.0.3
 info:
-  title: ContestSaaS API
+  title: Contest Manager API
   version: 1.0.0
   description: |
-    API REST de ContestSaaS. Todos los endpoints autenticados requieren el JWT de Supabase como Bearer token.
+    API REST de Contest Manager. Todos los endpoints autenticados requieren el JWT de Supabase como Bearer token.
 
     **Obtener token:** En la app, abre la consola del navegador y ejecuta:
     ```js

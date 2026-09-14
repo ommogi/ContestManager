@@ -5,7 +5,7 @@ import { loadEnv } from 'vite'
 const env = loadEnv('', process.cwd(), '')
 
 export default defineConfig({
-  title: 'ContestSaaS Docs',
+  title: 'Contest Manager Docs',
   description: 'Documentación técnica: API, base de datos y frontend',
   lang: 'es',
   themeConfig: {

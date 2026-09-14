@@ -3,7 +3,7 @@
 //
 // Required secrets (set with `supabase secrets set`):
 //   RESEND_API_KEY  — Resend API key (re_…)
-//   FROM_EMAIL      — Verified sender, e.g. "ContestSaaS <inscripciones@yourdomain.com>"
+//   FROM_EMAIL      — Verified sender, e.g. "Contest Manager <inscripciones@yourdomain.com>"
 //
 // Optional:
 //   APP_BASE_URL    — Base URL used for "Ir a mi concurso" CTA (defaults to https://contestsaas.app)
@@ -21,7 +21,7 @@
 import { serve } from 'https://deno.land/std@0.203.0/http/server.ts'
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? ''
-const FROM_EMAIL     = Deno.env.get('FROM_EMAIL')     ?? 'ContestSaaS <onboarding@resend.dev>'
+const FROM_EMAIL     = Deno.env.get('FROM_EMAIL')     ?? 'Contest Manager <onboarding@resend.dev>'
 const APP_BASE_URL   = Deno.env.get('APP_BASE_URL')   ?? 'https://contestsaas.app'
 
 const CORS_HEADERS = {

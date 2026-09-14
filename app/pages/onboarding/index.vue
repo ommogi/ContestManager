@@ -344,7 +344,7 @@ function formatDateForInput(date: string): string {
     <!-- Step 1: Choose account type -->
     <template v-if="currentStep === 'type'">
       <div class="text-center mb-6">
-        <h2 class="text-2xl font-bold tracking-tight">Bienvenido a ContestSaaS</h2>
+        <h2 class="text-2xl font-bold tracking-tight">Bienvenido a Contest Manager</h2>
         <p class="text-muted-foreground text-sm mt-1">¿Cómo vas a usar la plataforma?</p>
       </div>
 
