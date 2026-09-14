@@ -20,6 +20,39 @@ function getResend(): Resend | null {
   return _resend
 }
 
+/**
+ * Last-resort sender.
+ *
+ * Deliberately left pointing at the old domain rather than "updated" to a newer
+ * one: Resend rejects any sender whose domain is not verified on the account,
+ * so swapping this for another unverified domain would keep every send failing
+ * while looking like a fix. Production sets RESEND_FROM, so this value is not
+ * what it uses — it only decides how a misconfigured environment fails.
+ */
+const DEFAULT_FROM = 'ContestSaas <noreply@contestsaas.app>'
+
+let senderWarningLogged = false
+
+/**
+ * Says out loud that RESEND_FROM is missing, once per process.
+ *
+ * KAN-63 stayed invisible for months because a rejected send was recorded as
+ * delivered. The error is now read, but an environment falling back to
+ * DEFAULT_FROM would still only discover the problem after the first email
+ * nobody receives. Same reasoning as KAN-55 on the Supabase service key: a
+ * configuration gap should be loud at the moment it starts mattering, not
+ * silently absorbed by a default.
+ */
+function warnIfSenderUnconfigured(): void {
+  if (process.env.RESEND_FROM || senderWarningLogged) return
+  senderWarningLogged = true
+  console.warn(
+    `[email] RESEND_FROM is not set; falling back to ${DEFAULT_FROM}. `
+    + 'Resend refuses senders on unverified domains, so delivery will fail '
+    + 'unless that domain is verified on the account.',
+  )
+}
+
 async function logEmail(
   opts: {
     to: string
@@ -295,7 +328,10 @@ async function sendWithLog(
     return { sent: false, id: null, error: 'Email service not configured' }
   }
 
-  const from = process.env.RESEND_FROM || 'ContestSaas <noreply@contestsaas.app>'
+
+  const from = process.env.RESEND_FROM || DEFAULT_FROM
+  warnIfSenderUnconfigured()
+
   try {
     // The SDK resolves with { data, error } and only rejects on transport
     // failures, so every API-level rejection — unverified sender domain,
