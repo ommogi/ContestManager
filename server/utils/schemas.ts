@@ -16,6 +16,23 @@ export const dniString = z.string().min(8).max(20).nullable().optional()
 
 // ─── Domain schemas ──────────────────────────────────────────────────────────
 
+/**
+ * Answers to the contest's configurable inscription form (KAN-49).
+ *
+ * Stops at `unknown` on purpose. What a value is *allowed* to be depends on the
+ * field's type, and the field types are only known once the published schema
+ * has been read from the database — zod cannot decide it from the body alone.
+ * `prepareFormSubmission` narrows these and hands them to
+ * `assertValidFormResponses`, which is the authority.
+ *
+ * Both keys are optional so a contest with no published form posts exactly the
+ * body it posted before this existed.
+ */
+const formSubmissionFields = {
+  form_schema_id: uuidString.nullable().optional(),
+  responses: z.record(z.string(), z.unknown()).nullable().optional(),
+}
+
 /** Shared by free enroll and paid checkout public flows */
 export const EnrollBodySchema = z.object({
   category_id: uuidString,
@@ -26,6 +43,7 @@ export const EnrollBodySchema = z.object({
   country: z.string().min(2).max(100).nullable().optional(),
   email: emailString.nullable().optional(),
   phone: phoneString,
+  ...formSubmissionFields,
 })
 
 export const ScoreBodySchema = z.object({
@@ -65,6 +83,7 @@ export const CheckoutEnrollmentSchema = z.object({
   country: z.string().min(2).max(100).nullable().optional(),
   email: emailString.nullable().optional(),
   phone: phoneString,
+  ...formSubmissionFields,
 })
 
 export const ContestCreateSchema = z.object({

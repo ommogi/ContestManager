@@ -5,10 +5,20 @@ import type {
   FormField,
   FormFieldType,
   FormResponses,
+  FormResponseValue,
   FormValidationResult,
   FieldValidationError,
   InscriptionFormSchema
 } from '~/types/inscription-form'
+import {
+  validateFormField,
+  validateFormResponses
+} from '../../shared/inscription-form-validation'
+
+// `generateId` was imported from '~/utils', which does not export it, while an
+// identically named function was declared at the bottom of this file — a
+// duplicate binding that made the module fail to parse. The local one is the
+// real implementation; the import is gone.
 
 /**
  * Composable for managing dynamic inscription forms
@@ -135,7 +145,7 @@ export const useInscriptionForm = (initialFields: FormField[] = []) => {
   }
 
   // ─── Response Management ─────────────────────────────────────────────────
-  function setResponse(fieldId: string, value: any) {
+  function setResponse(fieldId: string, value: FormResponseValue) {
     responses[fieldId] = value
     // Clear error when user types
     if (errors.value[fieldId]) {
@@ -158,109 +168,18 @@ export const useInscriptionForm = (initialFields: FormField[] = []) => {
   }
 
   // ─── Validation ──────────────────────────────────────────────────────────
+  // The rules themselves live in shared/inscription-form-validation.ts and are
+  // the same module the server gate imports, so the browser and the API can no
+  // longer reach opposite verdicts. This layer only maps the shared result onto
+  // the `errors` record the templates bind to.
   function validateField(fieldId: string): boolean {
     const field = fields.value.find(f => f.id === fieldId)
     if (!field) return true
 
-    const value = responses[fieldId]
-    const validation = field.validation
-
-    // Required check
-    if (validation.required) {
-      if (field.type === 'checkbox-group') {
-        if (!Array.isArray(value) || value.length === 0) {
-          errors.value[fieldId] = 'Este campo es requerido'
-          return false
-        }
-      } else if (field.type === 'checkbox') {
-        // Checkbox can be optional even if "required" means "must respond"
-        // Usually checkbox required means it must be checked
-        if (validation.required && !value) {
-          errors.value[fieldId] = 'Debes aceptar este campo'
-          return false
-        }
-      } else {
-        if (value === undefined || value === null || value === '') {
-          errors.value[fieldId] = 'Este campo es requerido'
-          return false
-        }
-      }
-    }
-
-    // Skip further validation if empty and not required
-    if (!value || value === '') {
-      delete errors.value[fieldId]
-      return true
-    }
-
-    // String length validation
-    if (field.type === 'text' || field.type === 'textarea') {
-      const strValue = String(value)
-      if (validation.minLength && strValue.length < validation.minLength) {
-        errors.value[fieldId] = `Mínimo ${validation.minLength} caracteres`
-        return false
-      }
-      if (validation.maxLength && strValue.length > validation.maxLength) {
-        errors.value[fieldId] = `Máximo ${validation.maxLength} caracteres`
-        return false
-      }
-    }
-
-    // Number range validation
-    if (field.type === 'number') {
-      const numValue = Number(value)
-      if (validation.minValue !== undefined && numValue < validation.minValue) {
-        errors.value[fieldId] = `Valor mínimo: ${validation.minValue}`
-        return false
-      }
-      if (validation.maxValue !== undefined && numValue > validation.maxValue) {
-        errors.value[fieldId] = `Valor máximo: ${validation.maxValue}`
-        return false
-      }
-    }
-
-    // Pattern validation
-    if (validation.pattern && typeof value === 'string') {
-      const regex = new RegExp(validation.pattern)
-      if (!regex.test(value)) {
-        errors.value[fieldId] = validation.patternMessage || 'Formato no válido'
-        return false
-      }
-    }
-
-    // Custom rule validation
-    if (validation.customRule) {
-      switch (validation.customRule) {
-        case 'email':
-          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-          if (!emailRegex.test(String(value))) {
-            errors.value[fieldId] = 'Email no válido'
-            return false
-          }
-          break
-        case 'phone':
-          const phoneRegex = /^[\d\s\+\-\(\)]{8,20}$/
-          if (!phoneRegex.test(String(value))) {
-            errors.value[fieldId] = 'Teléfono no válido'
-            return false
-          }
-          break
-        case 'url':
-          try {
-            new URL(String(value))
-          } catch {
-            errors.value[fieldId] = 'URL no válida'
-            return false
-          }
-          break
-        case 'dni':
-          const dniRegex = /^[0-9]{8}[A-Za-z]$/
-          if (!dniRegex.test(String(value).toUpperCase())) {
-            errors.value[fieldId] = 'DNI no válido'
-            return false
-          }
-          break
-      }
+    const error = validateFormField(field, responses[fieldId])
+    if (error) {
+      errors.value[fieldId] = error.message
+      return false
     }
 
     delete errors.value[fieldId]
@@ -268,23 +187,15 @@ export const useInscriptionForm = (initialFields: FormField[] = []) => {
   }
 
   function validateAll(): FormValidationResult {
-    const fieldErrors: FieldValidationError[] = []
+    const result = validateFormResponses(fields.value, responses)
 
-    visibleFields.value.forEach(field => {
-      const isValid = validateField(field.id)
-      if (!isValid && errors.value[field.id]) {
-        fieldErrors.push({
-          fieldId: field.id,
-          message: errors.value[field.id],
-          type: 'required' // Simplified - could be more specific
-        })
-      }
-    })
+    // Rebuild the record so errors cleared since the last run disappear from
+    // the UI instead of lingering.
+    const next: Record<string, string> = {}
+    result.errors.forEach((e: FieldValidationError) => { next[e.fieldId] = e.message })
+    errors.value = next
 
-    return {
-      isValid: fieldErrors.length === 0,
-      errors: fieldErrors
-    }
+    return result
   }
 
   function clearErrors() {

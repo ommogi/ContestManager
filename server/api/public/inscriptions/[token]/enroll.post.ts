@@ -2,6 +2,10 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseUser, serverSupabaseAdmin, requireAuth, internalError } from '~~/server/utils/supabase'
 import { sendEnrollmentEmail } from '~~/server/utils/email'
 import { EnrollBodySchema } from '~~/server/utils/schemas'
+import {
+  persistParticipantFormResponses,
+  prepareFormSubmission,
+} from '~~/server/utils/inscription-form-responses'
 
 const ERROR_MESSAGES: Record<string, { status: number; message: string }> = {
   auth_required:       { status: 401, message: 'Debes iniciar sesión para inscribirte.' },
@@ -35,7 +39,15 @@ export default defineEventHandler(async (event) => {
   const phone = parsed.data.phone ?? null
 
   const client = serverSupabaseUser(event)
+  const admin = serverSupabaseAdmin()
   const effectiveEmail = email || user.email
+
+  // Validate the configurable form *before* anything is created (KAN-49).
+  // Runs on every request, not only when the body carries `responses`: the
+  // published schema is re-read here, so a handcrafted request that omits the
+  // key cannot skip a required field. Returns null when the contest has no
+  // published form, which leaves the rest of this handler untouched.
+  const submission = await prepareFormSubmission(admin, token, parsed.data)
 
   const { data, error } = await client.rpc('enroll_participant', {
     p_token: token,
@@ -65,10 +77,31 @@ export default defineEventHandler(async (event) => {
     throw internalError(event, error, 'rpc:enroll_participant')
   }
 
+  const participantId = typeof data === 'string' ? data : null
+
+  // Store the answers now that the participant exists. Not fire-and-forget:
+  // losing them silently is exactly the failure this ticket exists to prevent,
+  // so the request fails loudly and says what did and did not happen. There is
+  // no money on this path, so the participant simply stays enrolled.
+  if (submission && participantId) {
+    try {
+      await persistParticipantFormResponses(admin, participantId, submission)
+    } catch (e) {
+      console.error(
+        `[enroll] form responses not stored for participant ${participantId} ` +
+        `(schema ${submission.formSchemaId}):`,
+        (e as Error)?.message,
+      )
+      throw createError({
+        statusCode: 500,
+        statusMessage: 'Te has inscrito, pero no hemos podido guardar las respuestas del formulario. Contacta con la organización.',
+      })
+    }
+  }
+
   // Fire-and-forget confirmation email
   if (effectiveEmail) {
     try {
-      const admin = serverSupabaseAdmin()
       const [contestRes, categoryRes] = await Promise.all([
         admin.rpc('get_contest_by_token', { p_token: token }),
         admin.from('categories').select('name').eq('id', category_id).single(),
