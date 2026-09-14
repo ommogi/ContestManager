@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue'
 import type {
   FormField,
   FormFieldOption,
+  FormFileReference,
   FormResponses,
   FormResponseValue
 } from '~/types/inscription-form'
@@ -21,6 +22,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DatePicker } from '@/components/ui/date-picker'
 import { parseDate, type DateValue, getLocalTimeZone } from '@internationalized/date'
 import PhoneInput from '@/components/ui/phone-input/PhoneInput.vue'
+import { Button } from '@/components/ui/button'
+import { Loader2, Paperclip, X } from 'lucide-vue-next'
 import { cn } from '@/utils'
 
 interface Props {
@@ -30,19 +33,36 @@ interface Props {
   errors?: Record<string, string>
   disabled?: boolean
   showRequiredIndicator?: boolean
+  /**
+   * Endpoint that accepts one multipart upload and answers with a
+   * `FormFileReference` (KAN-41). Without it `file` fields render read-only:
+   * the builder preview has no token to upload against, and a field that
+   * silently kept `File` objects is exactly the data-loss bug this replaces.
+   */
+  uploadUrl?: string
+  /** Sent with each upload. The bearer token never travels in the URL. */
+  uploadHeaders?: Record<string, string>
 }
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: () => ({}),
   errors: () => ({}),
   disabled: false,
-  showRequiredIndicator: true
+  showRequiredIndicator: true,
+  uploadUrl: undefined,
+  uploadHeaders: () => ({})
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: FormResponses]
   'field-blur': [fieldId: string]
   'field-change': [fieldId: string, value: FormResponseValue]
+  /**
+   * Raised whenever a field starts or stops uploading, so the parent can hold
+   * the submit button while bytes are still in flight. Keyed by field because
+   * a page may mount several renderers.
+   */
+  'uploading-change': [fieldId: string, uploading: boolean]
 }>()
 
 const internalResponses = ref<FormResponses>({ ...props.modelValue })
@@ -127,21 +147,208 @@ function arrayValue(fieldId: string): string[] {
   return value.filter((item): item is string => typeof item === 'string')
 }
 
-/**
- * Files sit in the model as `File` objects until KAN-59 uploads them and
- * swaps them for `FormFileReference`s, so they are read back defensively.
- */
-function selectedFiles(fieldId: string): File[] {
-  const value = rawValue(fieldId)
-  if (!Array.isArray(value)) return []
-  return (value as unknown[]).filter((item): item is File => item instanceof File)
+// ─── File uploads (KAN-41) ─────────────────────────────────────────────────
+// Files used to sit in the model as browser `File` objects, which is not a
+// `FormResponseValue` and which `JSON.stringify` flattens to `{}` — the answer
+// was lost without an error. Now every selected file is POSTed to
+// `uploadUrl` immediately and only the `FormFileReference` the server returns
+// reaches the model.
+//
+// The server is the boundary: it re-reads the field from the PUBLISHED schema
+// and sniffs the MIME from the bytes. The `accept` and count checks below are
+// UX only — they save a round-trip, they do not authorise anything.
+
+interface PendingUpload {
+  /** Local id: two files may share a name. */
+  key: string
+  name: string
+  /** 0-100. Real bytes-sent progress, via XHR's upload events. */
+  progress: number
 }
 
-function handleFileChange(fieldId: string, event: Event) {
+const pendingUploads = ref<Record<string, PendingUpload[]>>({})
+const uploadErrors = ref<Record<string, string>>({})
+let uploadCounter = 0
+
+function isFileReference(value: unknown): value is FormFileReference {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.path === 'string' && typeof candidate.name === 'string'
+}
+
+/** Files already stored server-side, as references. Never `File` objects. */
+function uploadedFiles(fieldId: string): FormFileReference[] {
+  const value = rawValue(fieldId)
+  if (!Array.isArray(value)) return []
+  return (value as unknown[]).filter(isFileReference)
+}
+
+function pendingFor(fieldId: string): PendingUpload[] {
+  return pendingUploads.value[fieldId] ?? []
+}
+
+function isUploading(fieldId: string): boolean {
+  return pendingFor(fieldId).length > 0
+}
+
+function uploadErrorFor(fieldId: string): string | undefined {
+  return uploadErrors.value[fieldId]
+}
+
+/**
+ * Turn a failed upload into something a participant can act on.
+ *
+ * 400/409/413 carry a curated Spanish `message` from the server and are shown
+ * verbatim. Anything else gets a generic line: a 500's `statusMessage` is an
+ * internal code (`upload_ledger_failed`) and must not reach the page.
+ */
+function uploadErrorMessage(status: number, body: unknown): string {
+  const serverMessage =
+    typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
+      ? (body as { message: string }).message.trim()
+      : ''
+
+  if ((status === 400 || status === 409 || status === 413) && serverMessage) {
+    return serverMessage
+  }
+  switch (status) {
+    case 400: return 'El archivo no es válido para este campo.'
+    case 401:
+    case 403: return 'Tu sesión ha caducado. Vuelve a iniciar sesión para adjuntar archivos.'
+    case 409: return 'Las inscripciones de este concurso están cerradas.'
+    case 413: return 'El archivo es demasiado grande.'
+    case 404: return 'Este formulario ya no está disponible.'
+    case 0: return 'No se ha podido conectar. Comprueba tu conexión e inténtalo de nuevo.'
+    default: return 'No se ha podido subir el archivo. Inténtalo de nuevo.'
+  }
+}
+
+/**
+ * One upload, over XHR rather than `$fetch` because only XHR reports
+ * bytes-sent progress. No new dependency involved.
+ */
+function uploadFile(
+  fieldId: string,
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<FormFileReference> {
+  const url = props.uploadUrl
+  if (!url) return Promise.reject(new Error('upload_url_missing'))
+
+  return new Promise<FormFileReference>((resolve, reject) => {
+    const body = new FormData()
+    body.append('fieldId', fieldId)
+    body.append('file', file, file.name)
+
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url, true)
+    for (const [header, value] of Object.entries(props.uploadHeaders)) {
+      xhr.setRequestHeader(header, value)
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress(Math.round((event.loaded / event.total) * 100))
+      }
+    }
+
+    xhr.onload = () => {
+      let parsed: unknown = null
+      try { parsed = JSON.parse(xhr.responseText) } catch { parsed = null }
+
+      if (xhr.status >= 200 && xhr.status < 300 && isFileReference(parsed)) {
+        resolve(parsed)
+        return
+      }
+      reject(new Error(uploadErrorMessage(xhr.status, parsed)))
+    }
+
+    xhr.onerror = () => reject(new Error(uploadErrorMessage(0, null)))
+    xhr.onabort = () => reject(new Error(uploadErrorMessage(0, null)))
+
+    xhr.send(body)
+  })
+}
+
+async function handleFileChange(fieldId: string, event: Event) {
   const input = event.target as HTMLInputElement
-  const files = Array.from(input.files ?? [])
-  // Same transient shape as above: not a `FormResponseValue` until uploaded.
-  handleInput(fieldId, files as unknown as FormResponseValue)
+  const chosen = Array.from(input.files ?? [])
+  // Let the same file be picked again after a removal or a failure.
+  input.value = ''
+  if (chosen.length === 0) return
+
+  delete uploadErrors.value[fieldId]
+
+  if (!props.uploadUrl) {
+    uploadErrors.value[fieldId] = 'La subida de archivos no está disponible aquí.'
+    return
+  }
+
+  const field = props.fields.find(f => f.id === fieldId)
+  const maxFiles = field ? maxFilesOf(field) : 1
+  const already = uploadedFiles(fieldId).length + pendingFor(fieldId).length
+  const room = Math.max(0, maxFiles - already)
+
+  if (room === 0) {
+    uploadErrors.value[fieldId] = maxFiles === 1
+      ? 'Solo se admite un archivo. Quita el actual para subir otro.'
+      : `Solo se admiten ${maxFiles} archivos.`
+    return
+  }
+
+  const queued = chosen.slice(0, room)
+  if (queued.length < chosen.length) {
+    uploadErrors.value[fieldId] = `Solo se admiten ${maxFiles} archivos; se subirán los ${queued.length} primeros.`
+  }
+
+  const wasUploading = isUploading(fieldId)
+  if (!wasUploading) emit('uploading-change', fieldId, true)
+
+  // Sequential on purpose: the server counts existing files per field to
+  // enforce `maxFiles`, and parallel uploads race that count.
+  for (const file of queued) {
+    const key = `upload_${++uploadCounter}`
+    pendingUploads.value[fieldId] = [
+      ...pendingFor(fieldId),
+      { key, name: file.name, progress: 0 }
+    ]
+
+    try {
+      const reference = await uploadFile(fieldId, file, (percent) => {
+        pendingUploads.value[fieldId] = pendingFor(fieldId).map(
+          entry => entry.key === key ? { ...entry, progress: percent } : entry
+        )
+      })
+      handleInput(fieldId, [...uploadedFiles(fieldId), reference])
+    } catch (e) {
+      uploadErrors.value[fieldId] = e instanceof Error && e.message
+        ? e.message
+        : 'No se ha podido subir el archivo. Inténtalo de nuevo.'
+    } finally {
+      const remaining = pendingFor(fieldId).filter(entry => entry.key !== key)
+      if (remaining.length === 0) delete pendingUploads.value[fieldId]
+      else pendingUploads.value[fieldId] = remaining
+    }
+  }
+
+  emit('uploading-change', fieldId, false)
+}
+
+/**
+ * Detach an already-uploaded file.
+ *
+ * Only the reference is dropped. The stored object is swept server-side: it is
+ * never confirmed against a participant, so the orphan sweep removes it.
+ */
+function removeUploadedFile(fieldId: string, path: string) {
+  delete uploadErrors.value[fieldId]
+  handleInput(fieldId, uploadedFiles(fieldId).filter(file => file.path !== path))
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function toggleCheckboxGroup(fieldId: string, option: string, checked: boolean) {
@@ -190,6 +397,8 @@ function errorFor(fieldId: string): string | undefined {
 function describedBy(field: FormField): string | undefined {
   const ids: string[] = []
   if (field.description) ids.push(`${field.id}-description`)
+  if (field.type === 'file') ids.push(`${field.id}-constraints`)
+  if (field.type === 'file' && uploadErrorFor(field.id)) ids.push(`${field.id}-upload-error`)
   if (errorFor(field.id)) ids.push(`${field.id}-error`)
   return ids.length ? ids.join(' ') : undefined
 }
@@ -397,29 +606,79 @@ function describedBy(field: FormField): string | undefined {
           :id="field.id"
           type="file"
           :accept="acceptOf(field)"
-          :disabled="disabled"
+          :disabled="disabled || !uploadUrl || isUploading(field.id)"
           :multiple="maxFilesOf(field) > 1"
-          :aria-invalid="!!errorFor(field.id)"
+          :aria-invalid="!!errorFor(field.id) || !!uploadErrorFor(field.id)"
           :aria-describedby="describedBy(field)"
           class="cursor-pointer"
           @change="handleFileChange(field.id, $event)"
           @blur="handleBlur(field.id)"
         />
-        <p class="text-xs text-muted-foreground">
+        <p :id="`${field.id}-constraints`" class="text-xs text-muted-foreground">
           <template v-if="acceptOf(field)">Formatos: {{ acceptOf(field) }}</template>
           <template v-if="maxSizeOf(field)"> · Tamaño máx: {{ maxSizeOf(field) }}MB</template>
           <template v-if="maxFilesOf(field) > 1"> · Máx {{ maxFilesOf(field) }} archivos</template>
         </p>
-        <div v-if="selectedFiles(field.id).length" class="flex flex-wrap gap-2">
+
+        <!-- In flight -->
+        <div
+          v-for="pending in pendingFor(field.id)"
+          :key="pending.key"
+          class="space-y-1"
+        >
+          <div class="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 class="w-3.5 h-3.5 animate-spin shrink-0" />
+            <span class="truncate flex-1">Subiendo {{ pending.name }}…</span>
+            <span class="tabular-nums">{{ pending.progress }}%</span>
+          </div>
           <div
-            v-for="file in selectedFiles(field.id)"
-            :key="file.name"
-            class="flex items-center gap-2 text-xs bg-muted px-2 py-1 rounded"
+            class="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            :aria-valuenow="pending.progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-label="`Progreso de subida de ${pending.name}`"
           >
-            <span class="truncate max-w-[150px]">{{ file.name }}</span>
-            <span class="text-muted-foreground">({{ (file.size / 1024).toFixed(0) }}KB)</span>
+            <div
+              class="h-full rounded-full bg-primary transition-[width] duration-200"
+              :style="{ width: `${pending.progress}%` }"
+            />
           </div>
         </div>
+
+        <!-- Uploaded -->
+        <ul v-if="uploadedFiles(field.id).length" class="space-y-1">
+          <li
+            v-for="file in uploadedFiles(field.id)"
+            :key="file.path"
+            class="flex items-center gap-2 text-xs bg-muted px-2 py-1.5 rounded"
+          >
+            <Paperclip class="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+            <span class="truncate flex-1">{{ file.name }}</span>
+            <span class="text-muted-foreground shrink-0">{{ formatFileSize(file.size) }}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              class="h-6 w-6 shrink-0"
+              :disabled="disabled"
+              :aria-label="`Quitar el archivo ${file.name}`"
+              @click="removeUploadedFile(field.id, file.path)"
+            >
+              <X class="w-3.5 h-3.5" />
+            </Button>
+          </li>
+        </ul>
+
+        <!-- Upload failure, distinct from a validation error -->
+        <p
+          v-if="uploadErrorFor(field.id)"
+          :id="`${field.id}-upload-error`"
+          class="text-xs text-destructive"
+          role="alert"
+        >
+          {{ uploadErrorFor(field.id) }}
+        </p>
       </div>
 
       <!-- Error Message -->

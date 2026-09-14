@@ -108,12 +108,11 @@ interface FieldTypeOption {
   type: FormFieldType
   label: string
   icon: Component
-  /** Offered but not yet wired end to end. */
-  unavailable?: boolean
 }
 
-// `file` stays out until the upload + storage half lands (KAN-59): the
-// builder can describe the field but nothing would persist the uploads.
+// `file` was withheld while the renderer only held browser `File` objects in
+// memory: offering it would have created a field that loses its answer
+// silently. The uploads are real since KAN-41, so it is back in the palette.
 const FIELD_TYPES: FieldTypeOption[] = [
   { type: 'text', label: 'Texto corto', icon: Type },
   { type: 'textarea', label: 'Texto largo', icon: AlignLeft },
@@ -125,7 +124,7 @@ const FIELD_TYPES: FieldTypeOption[] = [
   { type: 'radio', label: 'Opción única', icon: List },
   { type: 'checkbox', label: 'Casilla', icon: CheckSquare },
   { type: 'checkbox-group', label: 'Selección múltiple', icon: CheckSquare },
-  { type: 'file', label: 'Archivo', icon: FileText, unavailable: true },
+  { type: 'file', label: 'Archivo', icon: FileText },
   { type: 'url', label: 'URL', icon: Link }
 ]
 
@@ -206,7 +205,7 @@ function defaultOptions(): FormFieldOption[] {
 }
 
 function addNewField(option: FieldTypeOption) {
-  if (option.unavailable || props.disabled) return
+  if (props.disabled) return
   const newField = createTypedField(option.type, NEW_FIELD_LABELS[option.type])
   addField(newField)
   selectedFieldId.value = newField.id
@@ -403,17 +402,13 @@ function handleReset() {
               variant="outline"
               size="sm"
               class="h-auto py-3 flex flex-col items-center gap-1"
-              :disabled="disabled || fieldType.unavailable"
-              :title="fieldType.unavailable ? 'Disponible próximamente' : undefined"
+              :disabled="disabled"
               @click="addNewField(fieldType)"
             >
               <component :is="fieldType.icon" class="w-5 h-5" />
               <span class="text-xs">{{ fieldType.label }}</span>
             </Button>
           </div>
-          <p class="text-xs text-muted-foreground">
-            Los campos de archivo estarán disponibles próximamente.
-          </p>
         </CardContent>
       </Card>
 
@@ -674,8 +669,9 @@ function handleReset() {
               </Button>
             </div>
 
-            <!-- File settings: only reachable for schemas that already have
-                 a file field, since the palette entry is disabled (KAN-59). -->
+            <!-- File settings. The platform caps these regardless of what is
+                 configured here: 25 MB per file and 10 files per field, in
+                 server/utils/inscription-uploads.ts. -->
             <div v-if="selectedField.type === 'file'" class="space-y-3">
               <div class="space-y-2">
                 <Label for="file-accept">Tipos de archivo aceptados</Label>
