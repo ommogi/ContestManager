@@ -131,6 +131,25 @@ export async function loadPublishedFormSchema(
   client: FormSchemaRpcClient,
   token: string,
 ): Promise<PublishedFormSchema> {
+  return (await loadPublishedFormSchemaForContest(client, token)).schema
+}
+
+/**
+ * Same lookup, but also handing back the contest the token resolved to.
+ *
+ * The contest id is needed by anything that has to address contest-scoped rows
+ * for this enrolment — `confirm_inscription_uploads` takes it as a parameter
+ * (KAN-49) — and re-resolving the token a second time would be both a wasted
+ * round-trip and a chance for the two lookups to disagree.
+ *
+ * Deliberately NOT folded into `PublishedFormSchema`: that type is the wire
+ * contract in `shared/` that the public page consumes, and the contest id is a
+ * server-side detail the browser has no business receiving.
+ */
+export async function loadPublishedFormSchemaForContest(
+  client: FormSchemaRpcClient,
+  token: string,
+): Promise<{ contestId: string; schema: PublishedFormSchema }> {
   const contestRes = await client.rpc('get_contest_by_token', { p_token: token })
   if (contestRes.error) {
     throw new FormSchemaLookupError('contest_lookup_failed', contestRes.error.message)
@@ -147,17 +166,22 @@ export async function loadPublishedFormSchema(
   }
 
   const row = asSchemaRow(schemaRes.data)
-  if (!row || typeof row.id !== 'string') return emptyPublishedFormSchema()
+  if (!row || typeof row.id !== 'string') {
+    return { contestId: contest.id, schema: emptyPublishedFormSchema() }
+  }
 
   return {
-    id: row.id,
-    version: typeof row.version === 'number' ? row.version : null,
-    publishedAt: row.published_at ?? null,
-    // `resolvePublishedFields` restores any missing core entry and preserves
-    // the order the schema was published with (KAN-56). Applied here rather
-    // than in the route handler so every consumer — the public page and the
-    // enrolment path that validates `form_schema_id` — sees one identical
-    // field list.
-    fields: resolvePublishedFields(normalizeFields(row.schema_json)),
+    contestId: contest.id,
+    schema: {
+      id: row.id,
+      version: typeof row.version === 'number' ? row.version : null,
+      publishedAt: row.published_at ?? null,
+      // `resolvePublishedFields` restores any missing core entry and preserves
+      // the order the schema was published with (KAN-56). Applied here rather
+      // than in the route handler so every consumer — the public page and the
+      // enrolment path that validates `form_schema_id` — sees one identical
+      // field list.
+      fields: resolvePublishedFields(normalizeFields(row.schema_json)),
+    },
   }
 }
