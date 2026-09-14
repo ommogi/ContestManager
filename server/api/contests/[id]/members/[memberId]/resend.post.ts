@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { internalError, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { sendJudgeInvitationEmail } from '~~/server/utils/email'
+import { appBaseUrl } from '~~/server/utils/app-url'
 
 export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
@@ -50,7 +51,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'Invitation already answered' })
   }
 
-  const baseUrl   = process.env.APP_BASE_URL || 'https://contestsaas.app'
+  const baseUrl   = appBaseUrl()
   const inviteUrl = `${baseUrl}/invite/${rotated as string}`
 
   const { data: contest } = await admin

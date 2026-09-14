@@ -2,6 +2,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { ContestMemberSchema } from '~~/server/utils/schemas'
 import { sendJudgeInvitationEmail } from '~~/server/utils/email'
+import { appBaseUrl } from '~~/server/utils/app-url'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -79,7 +80,7 @@ export default defineEventHandler(async (event) => {
   if (data?.role === 'judge' && data?.invitation_token && data?.email) {
     const memberEmail = data.email as string
     const token = data.invitation_token as string
-    const baseUrl = process.env.APP_BASE_URL || 'https://contestsaas.app'
+    const baseUrl = appBaseUrl()
     const inviteUrl = `${baseUrl}/invite/${token}`
 
     ;(async () => {

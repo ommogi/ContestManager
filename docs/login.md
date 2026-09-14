@@ -68,7 +68,7 @@ layout: page
 <div class="login-wrap">
   <div class="login-card">
     <h2>API Playground</h2>
-    <p class="sub">Inicia sesión con tu cuenta de ContestSaaS</p>
+    <p class="sub">Inicia sesión con tu cuenta de Contest Manager</p>
     <div class="field">
       <label>Email</label>
       <input v-model="email" type="email" placeholder="tu@email.com" @keyup.enter="login" :disabled="loading" />

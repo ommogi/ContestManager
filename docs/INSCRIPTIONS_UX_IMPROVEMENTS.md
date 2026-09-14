@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides comprehensive recommendations and implementation details for improving the inscriptions user experience in the ContestSaas platform.
+This document provides comprehensive recommendations and implementation details for improving the inscriptions user experience in the Contest Manager platform.
 
 ---
 

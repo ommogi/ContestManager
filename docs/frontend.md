@@ -1,4 +1,4 @@
-# Frontend Architecture — ContestSaaS
+# Frontend Architecture — Contest Manager
 
 Stack: Nuxt 4.4.2 · Vue 3 (Composition API + `<script setup>`) · TypeScript · Tailwind v4 · shadcn-vue · Pinia · Supabase Realtime
 

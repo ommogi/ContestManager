@@ -12,9 +12,9 @@ definePageMeta({
 })
 
 useSeoMeta({
-  title: 'ContestSaaS',
+  title: 'Contest Manager',
   description: 'Organiza concursos, coordina jurados y publica resultados con una experiencia moderna y de alto impacto.',
-  ogTitle: 'ContestSaaS',
+  ogTitle: 'Contest Manager',
   ogDescription: 'La plataforma para lanzar concursos con control operativo, scoring en tiempo real y una experiencia premium.',
 })
 
@@ -173,11 +173,11 @@ const vReveal: Directive<HTMLElement, void> = {
         <NuxtLink to="/" class="flex items-center gap-3 cursor-pointer">
           <img
             src="https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png"
-            alt="ContestSaaS"
+            alt="Contest Manager"
             class="h-10 w-10 rounded-2xl object-contain"
           >
           <div>
-            <p class="text-sm font-semibold tracking-[0.24em] text-white/90 uppercase">ContestSaaS</p>
+            <p class="text-sm font-semibold tracking-[0.24em] text-white/90 uppercase">Contest Manager</p>
             <p class="text-xs text-white/50">Concursos con presencia premium</p>
           </div>
         </NuxtLink>
@@ -481,7 +481,7 @@ const vReveal: Directive<HTMLElement, void> = {
           <div v-reveal class="reveal space-y-6 text-center">
             <p class="text-xs uppercase tracking-[0.3em] text-white/60">Listo para usar</p>
             <h2 class="mx-auto max-w-3xl text-3xl font-black tracking-[-0.05em] text-white sm:text-5xl">La landing ya no solo informa. Ahora vende la sensacion de control.</h2>
-            <p class="mx-auto max-w-2xl text-base leading-8 text-white/68">Implemente una direccion visual mas cinematica y profesional en la home para que ContestSaaS entre con mucha mas fuerza desde el primer frame.</p>
+            <p class="mx-auto max-w-2xl text-base leading-8 text-white/68">Implemente una direccion visual mas cinematica y profesional en la home para que Contest Manager entre con mucha mas fuerza desde el primer frame.</p>
             <div class="flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Button as-child size="lg" class="h-12 rounded-full bg-[#f97316] px-7 text-base text-white shadow-[0_18px_54px_rgba(249,115,22,0.28)] hover:bg-[#fb923c]">
                 <NuxtLink :to="ctaHref">

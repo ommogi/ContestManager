@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: ContestSaaS
+  name: Contest Manager
   text: Documentación técnica
   tagline: Referencia completa de API, base de datos y arquitectura frontend
   actions:

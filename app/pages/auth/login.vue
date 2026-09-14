@@ -176,7 +176,7 @@ async function handleOAuth(provider: 'google' | 'facebook') {
         class="w-24 h-24 object-contain"
       />
       <h1 class="text-2xl font-bold tracking-tight text-zinc-100">
-        {{ mode === 'login' ? 'Inicia sesión en ContestSaaS' : 'Crea tu cuenta' }}
+        {{ mode === 'login' ? 'Inicia sesión en Contest Manager' : 'Crea tu cuenta' }}
       </h1>
       <p class="text-sm text-zinc-400">
         <template v-if="mode === 'login'">

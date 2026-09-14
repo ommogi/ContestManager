@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { sendJudgePoolInvitationEmail } from '~~/server/utils/email'
+import { appBaseUrl } from '~~/server/utils/app-url'
 
 export default defineEventHandler(async (event) => {
   const { org } = await requireOrgOwner(event)
@@ -43,7 +44,7 @@ export default defineEventHandler(async (event) => {
 
   // Fire-and-forget resend email
   const token = rotated as string
-  const baseUrl = process.env.APP_BASE_URL || 'https://contestsaas.app'
+  const baseUrl = appBaseUrl()
   const inviteUrl = `${baseUrl}/invite/pool/${token}`
 
   ;(async () => {

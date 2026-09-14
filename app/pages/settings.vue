@@ -19,6 +19,22 @@ import { validateDni, detectIdKind } from '@/utils/dni'
 const authStore = useAuthStore()
 const { profile, organization, user, isOrgOwner, initials, displayName } = storeToRefs(authStore)
 
+/**
+ * Host shown in front of the organisation slug.
+ *
+ * Was hardcoded to `contestsaas.com/`, which was already wrong: the server
+ * builds its links from APP_BASE_URL, whose fallback is `contestsaas.app`. So
+ * organisers were being shown a URL that was not theirs on a domain the app
+ * does not use.
+ *
+ * Reading it from the browser makes it right by construction and leaves
+ * nothing to keep in sync — the app is SPA-only (`ssr: false`), so `window` is
+ * always there. The fallback covers only the instant before hydration.
+ */
+const slugHost = computed(() =>
+  typeof window === 'undefined' ? '' : `${window.location.host}/`,
+)
+
 // ── Avatar upload ─────────────────────────────────────────────────────────────
 const avatarInput = ref<HTMLInputElement | null>(null)
 const uploadingAvatar = ref(false)
@@ -453,7 +469,7 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
             <Label class="text-xs font-bold uppercase tracking-widest text-zinc-500">Slug (URL)</Label>
             <div class="flex items-center">
               <span class="h-9 px-3 flex items-center text-xs text-muted-foreground bg-muted border border-r-0 border-border rounded-l-md">
-                contestsaas.com/
+                {{ slugHost }}
               </span>
               <Input
                 v-model="orgForm.slug"

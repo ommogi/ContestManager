@@ -2,6 +2,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
 import { JudgePoolInviteSchema } from '~~/server/utils/schemas'
 import { sendJudgePoolInvitationEmail } from '~~/server/utils/email'
+import { appBaseUrl } from '~~/server/utils/app-url'
 
 export default defineEventHandler(async (event) => {
   const { org, user } = await requireOrgOwner(event)
@@ -73,7 +74,7 @@ export default defineEventHandler(async (event) => {
 
   // Fire-and-forget email
   const token = invitation.invitation_token as string
-  const baseUrl = process.env.APP_BASE_URL || 'https://contestsaas.app'
+  const baseUrl = appBaseUrl()
   const inviteUrl = `${baseUrl}/invite/pool/${token}`
 
   ;(async () => {
