@@ -131,26 +131,24 @@ export default defineEventHandler(async (event) => {
     //   · nothing was referenced → the only thing missed is the early purge of
     //     discarded uploads, which the orphan sweep does anyway. Log it and let
     //     the inscription succeed; a 500 here would be a lie.
-    if (participantId) {
-      try {
-        await confirmInscriptionUploads(admin, {
-          contestId: submission.contestId,
-          userId: user.id,
-          participantId,
-          paths: uploadPaths,
+    try {
+      await confirmInscriptionUploads(admin, {
+        contestId: submission.contestId,
+        userId: user.id,
+        participantId,
+        paths: uploadPaths,
+      })
+    } catch (e) {
+      console.error(
+        `[enroll] uploads not confirmed for participant ${participantId} ` +
+        `(contest ${submission.contestId}, ${uploadPaths.length} file(s)):`,
+        (e as Error)?.message,
+      )
+      if (uploadPaths.length > 0) {
+        throw createError({
+          statusCode: 500,
+          statusMessage: 'Te has inscrito, pero no hemos podido guardar los archivos adjuntos. Contacta con la organización.',
         })
-      } catch (e) {
-        console.error(
-          `[enroll] uploads not confirmed for participant ${participantId} ` +
-          `(contest ${submission.contestId}, ${uploadPaths.length} file(s)):`,
-          (e as Error)?.message,
-        )
-        if (uploadPaths.length > 0) {
-          throw createError({
-            statusCode: 500,
-            statusMessage: 'Te has inscrito, pero no hemos podido guardar los archivos adjuntos. Contacta con la organización.',
-          })
-        }
       }
     }
   }
