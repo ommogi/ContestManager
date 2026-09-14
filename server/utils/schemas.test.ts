@@ -168,9 +168,105 @@ describe('new schemas accept real frontend payloads', () => {
   })
 
   it('form schema body', () => {
+    // The legacy shape (`key`, no order/hidden/validation, arbitrary extra
+    // keys kept by .loose()) is now rejected on purpose: it disagreed with
+    // what the builder emits, so nothing valid was ever accepted. See the
+    // dedicated contract suite below.
     expect(FormSchemaBodySchema.safeParse({
       fields: [{ key: 'instrument', label: 'Instrumento', type: 'text', required: true, extra: 'kept' }],
-    }).success).toBe(true)
+    }).success).toBe(false)
     expect(FormSchemaBodySchema.safeParse({ fields: 'nope' }).success).toBe(false)
+  })
+})
+
+describe('FormSchemaBodySchema — inscription form contract', () => {
+  const field = (over: Record<string, unknown> = {}) => ({
+    id: 'obra',
+    type: 'text',
+    label: 'Obra',
+    required: true,
+    order: 0,
+    hidden: false,
+    validation: { minLength: 3 },
+    ...over,
+  })
+
+  it('accepts what the builder actually emits', () => {
+    const res = FormSchemaBodySchema.safeParse({ fields: [field()] })
+    expect(res.success).toBe(true)
+  })
+
+  it('accepts select options as {value,label} objects', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [field({
+        id: 'voz',
+        type: 'select',
+        options: [{ value: 'soprano', label: 'Soprano' }],
+      })],
+    })
+    expect(res.success).toBe(true)
+  })
+
+  // The old contract demanded `key` and options as bare strings. Persisting a
+  // mix of both shapes is what has to stay impossible.
+  it('rejects the legacy shape: key instead of id', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [{ key: 'obra', label: 'Obra', type: 'text' }],
+    })
+    expect(res.success).toBe(false)
+  })
+
+  it('rejects options as bare strings', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [field({ id: 'voz', type: 'select', options: ['soprano', 'tenor'] })],
+    })
+    expect(res.success).toBe(false)
+  })
+
+  it('rejects validation rules placed at the field root', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [{ ...field(), minLength: 3 }],
+    })
+    expect(res.success).toBe(false)
+  })
+
+  it('rejects an unknown field type', () => {
+    const res = FormSchemaBodySchema.safeParse({ fields: [field({ type: 'signature' })] })
+    expect(res.success).toBe(false)
+  })
+
+  it('accepts the four types that previously had no interface', () => {
+    for (const type of ['email', 'phone', 'date', 'url']) {
+      const res = FormSchemaBodySchema.safeParse({ fields: [field({ type })] })
+      expect(res.success, `type ${type} should be valid`).toBe(true)
+    }
+  })
+
+  it('rejects duplicate field ids', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [field(), field({ order: 1 })],
+    })
+    expect(res.success).toBe(false)
+    if (!res.success) {
+      expect(JSON.stringify(res.error.issues)).toContain('repetido')
+    }
+  })
+
+  it('rejects a select without options', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [field({ id: 'voz', type: 'select' })],
+    })
+    expect(res.success).toBe(false)
+  })
+
+  it('rejects options repeating the same value', () => {
+    const res = FormSchemaBodySchema.safeParse({
+      fields: [field({
+        id: 'voz',
+        type: 'select',
+        options: [{ value: 'x', label: 'A' }, { value: 'x', label: 'B' }],
+      })],
+    })
+    expect(res.success).toBe(false)
   })
 })

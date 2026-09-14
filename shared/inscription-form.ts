@@ -1,9 +1,22 @@
-// types/inscription-form.ts
+// Wire contract for the configurable inscription form.
+//
+// Single source of truth, deliberately in `shared/` so both `app/` and
+// `server/` can import it without crossing the Nuxt boundary. Before this
+// file the contract existed three times and disagreed with itself: the
+// builder emitted `id` + nested `validation` + `{value,label}` options, the
+// server's zod schema demanded `key` + flat rules + `string[]` options, and
+// the SQL validator read the rules from the field root. The server would have
+// rejected every real form.
+//
+// Nothing here may be redefined elsewhere. Extend it instead.
 
-import type { Json } from './index'
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
+
+/** Contest lifecycle, mirroring the database enum. */
+export type ContestStatus = 'draft' | 'active' | 'finished' | 'cancelled'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Form Field Types
+// Fields
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type FormFieldType =
@@ -19,6 +32,12 @@ export type FormFieldType =
   | 'checkbox-group'
   | 'file'
   | 'url'
+
+/** Every value in `FormFieldType`, for runtime validation and UI palettes. */
+export const FORM_FIELD_TYPES: readonly FormFieldType[] = [
+  'text', 'textarea', 'number', 'email', 'phone', 'date',
+  'select', 'radio', 'checkbox', 'checkbox-group', 'file', 'url',
+] as const
 
 export interface FormFieldOption {
   value: string
@@ -38,10 +57,11 @@ export interface FormFieldValidation {
 }
 
 export interface FormFieldBase {
+  /** Stable identifier, unique within a schema. Keys into `FormResponses`. */
   id: string
   type: FormFieldType
   label: string
-  labelTranslations?: Record<string, string>  // i18n support
+  labelTranslations?: Record<string, string>
   description?: string
   descriptionTranslations?: Record<string, string>
   placeholder?: string
@@ -49,40 +69,48 @@ export interface FormFieldBase {
   required: boolean
   order: number
   hidden: boolean
+  /**
+   * System field with a reserved `core.` id, whose value lands in a typed
+   * `participants` column rather than in `responses_json`. Its `id` and `type`
+   * are fixed; `order`, `label` and — for the non-irreducible ones — `hidden`
+   * and `required` are the organization's to change. See
+   * `./inscription-form-core.ts` for the catalogue and the rules.
+   */
+  isCore?: boolean
+  /** Rules live here, never at the field root. */
   validation: FormFieldValidation
-  width?: 'full' | 'half' | 'third'  // For grid layouts
+  width?: 'full' | 'half' | 'third'
+}
+
+/**
+ * Types that need no extra configuration beyond the base.
+ *
+ * These four were declared in FormFieldType but had no interface, so a field
+ * of any of them did not satisfy the FormField union.
+ */
+export interface FormFieldSimple extends FormFieldBase {
+  type: 'email' | 'phone' | 'date' | 'url'
 }
 
 export interface FormFieldText extends FormFieldBase {
   type: 'text'
-  validation: FormFieldValidation & {
-    minLength?: number
-    maxLength?: number
-  }
 }
 
 export interface FormFieldTextarea extends FormFieldBase {
   type: 'textarea'
   rows?: number
-  validation: FormFieldValidation & {
-    minLength?: number
-    maxLength?: number
-  }
 }
 
 export interface FormFieldNumber extends FormFieldBase {
   type: 'number'
   step?: number
-  validation: FormFieldValidation & {
-    minValue?: number
-    maxValue?: number
-  }
 }
 
 export interface FormFieldSelect extends FormFieldBase {
   type: 'select' | 'radio'
   options: FormFieldOption[]
-  allowOther?: boolean  // Allow custom value not in options
+  /** Accept a value outside `options`. */
+  allowOther?: boolean
 }
 
 export interface FormFieldCheckbox extends FormFieldBase {
@@ -100,12 +128,14 @@ export interface FormFieldCheckboxGroup extends FormFieldBase {
 
 export interface FormFieldFile extends FormFieldBase {
   type: 'file'
-  accept?: string  // MIME types: 'image/*,.pdf'
+  /** MIME types or extensions, e.g. 'image/*,.pdf'. Enforced server-side. */
+  accept?: string
   maxFiles?: number
   maxSizeMB?: number
 }
 
 export type FormField =
+  | FormFieldSimple
   | FormFieldText
   | FormFieldTextarea
   | FormFieldNumber
@@ -115,7 +145,7 @@ export type FormField =
   | FormFieldFile
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Form Schema
+// Schema
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface InscriptionFormSchema {
@@ -129,25 +159,39 @@ export interface InscriptionFormSchema {
   publishedAt?: string
 }
 
-export interface InscriptionFormSchemaCreate {
-  contestId: string
+/**
+ * What the public endpoint hands to the inscription page.
+ *
+ * `id` is required to record `participant_form_responses.form_schema_id`; a
+ * contest with no published form answers with nulls and an empty array, which
+ * is a normal state rather than an error.
+ */
+export interface PublishedFormSchema {
+  id: string | null
+  version: number | null
+  publishedAt: string | null
   fields: FormField[]
 }
 
-export interface InscriptionFormSchemaUpdate {
-  fields?: FormField[]
-  isPublished?: boolean
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Responses
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Form Responses
-// ─────────────────────────────────────────────────────────────────────────────
+/** A stored reference to an uploaded file. Never the file contents. */
+export interface FormFileReference {
+  path: string
+  name: string
+  size: number
+  mimeType: string
+  uploadedAt: string
+}
 
 export type FormResponseValue =
   | string
   | number
   | boolean
   | string[]
+  | FormFileReference[]
   | null
 
 export interface FormResponses {
@@ -163,104 +207,28 @@ export interface ParticipantFormResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Validation Errors
+// Validation
 // ─────────────────────────────────────────────────────────────────────────────
+
+export type FieldValidationErrorType =
+  | 'required'
+  | 'minLength'
+  | 'maxLength'
+  | 'minValue'
+  | 'maxValue'
+  | 'pattern'
+  | 'minSelected'
+  | 'maxSelected'
+  | 'option'
+  | 'custom'
 
 export interface FieldValidationError {
   fieldId: string
   message: string
-  type: 'required' | 'minLength' | 'maxLength' | 'minValue' | 'maxValue' | 'pattern' | 'custom'
+  type: FieldValidationErrorType
 }
 
 export interface FormValidationResult {
   isValid: boolean
   errors: FieldValidationError[]
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Form Builder UI State
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface FormBuilderDragItem {
-  type: 'FIELD'
-  field: FormField
-  index: number
-}
-
-export interface FormBuilderState {
-  fields: FormField[]
-  selectedFieldId: string | null
-  isDirty: boolean
-  isPreviewMode: boolean
-  activeLanguage: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Contest Status Config (for inscription page)
-// ─────────────────────────────────────────────────────────────────────────────
-
-import type { ContestStatus } from './index'
-
-export interface InscriptionStatusConfig {
-  status: ContestStatus
-  registrationOpen: boolean
-  badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline'
-  badgeIcon: string
-  showForm: boolean
-  message: {
-    title: string
-    description: string
-  }
-  allowPreview: boolean
-}
-
-export const INSCRIPTION_STATUS_CONFIG: Record<ContestStatus, InscriptionStatusConfig> = {
-  draft: {
-    status: 'draft',
-    registrationOpen: true,
-    badgeVariant: 'default',
-    badgeIcon: 'CheckCircle2',
-    showForm: true,
-    message: {
-      title: 'Inscripciones abiertas',
-      description: 'Completa el formulario para participar en este concurso.'
-    },
-    allowPreview: true
-  },
-  active: {
-    status: 'active',
-    registrationOpen: false,
-    badgeVariant: 'secondary',
-    badgeIcon: 'Trophy',
-    showForm: false,
-    message: {
-      title: 'Concurso en progreso',
-      description: 'Las inscripciones han cerrado. El concurso está actualmente en progreso.'
-    },
-    allowPreview: true
-  },
-  finished: {
-    status: 'finished',
-    registrationOpen: false,
-    badgeVariant: 'outline',
-    badgeIcon: 'Award',
-    showForm: false,
-    message: {
-      title: 'Concurso finalizado',
-      description: 'Este concurso ha terminado. Consulta los resultados.'
-    },
-    allowPreview: true
-  },
-  cancelled: {
-    status: 'cancelled',
-    registrationOpen: false,
-    badgeVariant: 'destructive',
-    badgeIcon: 'CircleX',
-    showForm: false,
-    message: {
-      title: 'Concurso cancelado',
-      description: 'Este concurso ha sido cancelado por el organizador.'
-    },
-    allowPreview: true
-  }
 }
