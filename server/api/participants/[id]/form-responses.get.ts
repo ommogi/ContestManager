@@ -9,7 +9,9 @@ import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import {
   loadFormResponsesForParticipants,
+  toParticipantCoreRow,
   FormResponsesQueryError,
+  PARTICIPANT_CORE_COLUMNS,
   type FormResponsesClient,
 } from '~~/server/utils/form-responses'
 
@@ -19,9 +21,13 @@ export default defineEventHandler(async (event) => {
 
   const admin = serverSupabaseAdmin()
 
+  // The gate needs `contest_id`; the core schema entries need the typed
+  // columns their values live in (KAN-56/58). Both come from this one row, so
+  // resolving a participant still costs three queries in total: this lookup,
+  // the response row, and its schema.
   const { data: participant, error } = await admin
     .from('participants')
-    .select('id, contest_id')
+    .select(`contest_id, ${PARTICIPANT_CORE_COLUMNS}`)
     .eq('id', participantId)
     .maybeSingle()
 
@@ -38,7 +44,7 @@ export default defineEventHandler(async (event) => {
   try {
     const [resolved] = await loadFormResponsesForParticipants(
       admin as unknown as FormResponsesClient,
-      [participantId],
+      [toParticipantCoreRow(participant as Record<string, unknown>)],
     )
     // loadFormResponsesForParticipants always returns one entry per requested
     // id, so the fallback only guards against a future refactor.
