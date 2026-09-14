@@ -61,17 +61,25 @@ describe('loadPublishedFormSchema', () => {
     expect(result.id).toBe('schema-3')
     expect(result.version).toBe(3)
     expect(result.publishedAt).toBe('2026-09-01T10:00:00Z')
-    expect(result.fields.map(f => f.id)).toEqual(['a', 'b'])
+    // Since KAN-56 the core entries are part of the published form, so a
+    // schema stored with only custom questions comes back with the core block
+    // restored ahead of them. The organizer's own questions keep their order.
+    expect(result.fields.filter(f => !f.isCore).map(f => f.id)).toEqual(['a', 'b'])
+    expect(result.fields.some(f => f.id === 'core.first_name')).toBe(true)
   })
 
-  it('returns an empty schema, not an error, when nothing is published', async () => {
+  it('returns the default core form, not an error, when nothing is published', async () => {
     const client = stubClient({
       get_contest_by_token: contestOk,
       get_inscription_form_schema: { data: [], error: null },
     })
-    await expect(loadPublishedFormSchema(client, 'tok')).resolves.toEqual({
-      id: null, version: null, publishedAt: null, fields: [],
-    })
+    // "No published schema" and "published schema with no custom questions"
+    // must describe the same form, so neither answers with an empty list.
+    const result = await loadPublishedFormSchema(client, 'tok')
+    expect(result).toEqual(emptyPublishedFormSchema())
+    expect(result.id).toBeNull()
+    expect(result.fields.every(f => f.isCore)).toBe(true)
+    expect(result.fields.length).toBeGreaterThan(0)
   })
 
   it('returns an empty schema when the rpc answers null', async () => {
@@ -137,7 +145,7 @@ describe('loadPublishedFormSchema', () => {
     })
     const result = await loadPublishedFormSchema(client, 'tok')
     expect(result.id).toBe('s1')
-    expect(result.fields).toHaveLength(1)
+    expect(result.fields.filter(f => !f.isCore).map(f => f.id)).toEqual(['a'])
   })
 })
 

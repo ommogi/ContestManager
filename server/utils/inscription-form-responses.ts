@@ -174,9 +174,17 @@ export async function prepareFormSubmission(
   const submitted = coerceFormResponses(body.responses ?? {})
   assertResponsesWithinLimit(submitted)
 
+  // Core fields are schema entries since KAN-56, but their values never travel
+  // in `responses`: they arrive as first_name/last_name/birthdate/... in the
+  // enrolment body and land in `participants` columns. Validating them here
+  // would reject every inscription for a required field the participant did
+  // fill in, just not in this bag. `responses_json` stays the organizer's own
+  // questions, which is also what keeps it a single source of truth.
+  const answerable = published.fields.filter(f => !f.isCore)
+
   // Throws 400 with per-field errors, and returns the answers narrowed to the
   // ids the schema declares — so nothing unvalidated reaches the database.
-  const responses = assertValidFormResponses(published.fields, submitted)
+  const responses = assertValidFormResponses(answerable, submitted)
 
   return { formSchemaId: published.id, responses }
 }
