@@ -4,7 +4,8 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
 import { FormSchemaBodySchema } from '~~/server/utils/schemas'
-import type { FormField } from '~/types/inscription-form'
+import { validateCoreFields, reconcileFormFields } from '~~/shared/inscription-form-core'
+import type { FormField } from '~~/shared/inscription-form'
 
 interface FormSchemaBody {
   fields: FormField[]
@@ -24,6 +25,24 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Invalid fields', data: parsedBody.error.issues })
   }
   const body = { ...(rawBody as FormSchemaBody), fields: parsedBody.data.fields as FormField[] }
+
+  // KAN-56: core fields are schema entries now. Reject a payload that hides,
+  // drops or retypes one of the irreducible three (nombre, apellidos, fecha de
+  // nacimiento) — the age filter and the enroll_participant guards depend on
+  // them — and reject a custom field squatting on the reserved `core.` prefix.
+  const coreIssues = validateCoreFields(body.fields)
+  if (coreIssues.length > 0) {
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'invalid_core_fields',
+      data: { issues: coreIssues },
+      message: coreIssues[0]!.message,
+    })
+  }
+
+  // Restore any omitted core entry and renumber `order` densely, so the stored
+  // schema is always a complete, self-describing list.
+  const fields = reconcileFormFields(body.fields)
 
   const client = serverSupabaseAdmin()
 
@@ -45,7 +64,7 @@ export default defineEventHandler(async (event) => {
       contest_id: contestId,
       version: newVersion,
       is_published: body.isPublished || false,
-      schema_json: body.fields,
+      schema_json: fields,
     })
     .select()
     .single()

@@ -19,6 +19,9 @@ import {
 import { parseDate, getLocalTimeZone, type DateValue } from '@internationalized/date'
 import { DIAL_CODES, findCountryByName } from '@/utils/countries'
 import { validateDni } from '@/utils/dni'
+import DynamicFormRenderer from '@/components/inscription/DynamicFormRenderer.vue'
+import { useInscriptionForm } from '~/composables/useInscriptionForm'
+import type { FormField, FormResponses, PublishedFormSchema } from '~/types/inscription-form'
 
 definePageMeta({
   layout: 'auth',
@@ -167,6 +170,75 @@ watch([computedAge, () => form.category_id], () => {
   }
 })
 
+// ── Configurable form (KAN-45) ───────────────────────────────────────────
+// Additive: everything above this block is the fixed form and keeps working
+// untouched. If this fetch fails, or the contest has no published schema,
+// `dynamicFields` stays empty and the page behaves exactly as before.
+const { data: formSchemaData, error: formSchemaError } = await useFetch<PublishedFormSchema>(
+  () => `/api/public/inscriptions/${token.value}/form-schema`,
+  { server: true },
+)
+
+watchEffect(() => {
+  if (formSchemaError.value) {
+    // Logged, never surfaced: a missing custom form must not block an
+    // inscription that would otherwise succeed.
+    console.warn('[join] no se pudo cargar el formulario personalizado:', formSchemaError.value)
+  }
+})
+
+// The endpoint returns the *whole* published form, core entries included
+// (KAN-56). The fixed block above already renders those, so only the
+// organizer's own questions go to the renderer — otherwise nombre, apellidos
+// and fecha de nacimiento would appear twice.
+//
+// Rendering one unified list from this schema, and retiring the fixed block,
+// is the KAN-45 follow-up: the fixed inputs carry the age filter, the DNI
+// check, PhoneInput's E.164 handling and the profile autofill, and none of
+// that moves without its own change.
+const dynamicFields = computed<FormField[]>(
+  () => (formSchemaData.value?.fields ?? []).filter(f => !f.isCore),
+)
+const formSchemaId = computed<string | null>(() => formSchemaData.value?.id ?? null)
+const hasDynamicFields = computed(() => dynamicFields.value.length > 0)
+
+const {
+  responses: dynamicResponses,
+  errors: dynamicErrors,
+  validateField: validateDynamicField,
+  validateAll: validateDynamicFields,
+  importSchema: importDynamicSchema,
+} = useInscriptionForm()
+
+// The schema arrives after mount, so feed it in once it resolves. Guarded on
+// length because importSchema() clears any answers already typed.
+const dynamicSchemaLoaded = ref(false)
+watch(dynamicFields, (fields) => {
+  if (dynamicSchemaLoaded.value || fields.length === 0) return
+  importDynamicSchema({ fields })
+  dynamicSchemaLoaded.value = true
+}, { immediate: true })
+
+function onDynamicUpdate(next: FormResponses) {
+  // The renderer emits a fresh object; copy onto the composable's reactive
+  // `responses` so validateAll() sees the current answers.
+  for (const [key, value] of Object.entries(next)) {
+    dynamicResponses[key] = value
+  }
+}
+
+function onDynamicFieldChange(fieldId: string) {
+  if (dynamicErrors.value[fieldId]) delete dynamicErrors.value[fieldId]
+}
+
+/** Errors paired with their field label, in the order the fields are shown. */
+const dynamicErrorList = computed(() =>
+  dynamicFields.value
+    .filter(f => !f.hidden && dynamicErrors.value[f.id])
+    .sort((a, b) => a.order - b.order)
+    .map(f => ({ id: f.id, label: f.label, message: dynamicErrors.value[f.id] })),
+)
+
 // ── Submit ───────────────────────────────────────────────────────────────
 const submitting = ref(false)
 const success = ref(false)
@@ -192,6 +264,12 @@ async function submit() {
       return
     }
   }
+  // Configurable fields, validated with the same rules the server enforces.
+  // Messages are rendered under the section rather than raised as a toast.
+  if (hasDynamicFields.value && !validateDynamicFields().isValid) {
+    toast.error('Revisa los campos marcados del formulario.')
+    return
+  }
   submitting.value = true
   try {
     const accessToken = authStore.session?.access_token ?? ''
@@ -204,6 +282,11 @@ async function submit() {
       country: form.country.trim() || null,
       email: form.email.trim() || null,
       phone: form.phone.trim() || null,
+      // Only sent when the contest actually has a published form, so a
+      // contest without one posts a byte-identical body to before.
+      ...(hasDynamicFields.value && formSchemaId.value
+        ? { form_schema_id: formSchemaId.value, responses: { ...dynamicResponses } }
+        : {}),
     }
     const headers = {
       Authorization: `Bearer ${accessToken}`,
@@ -508,6 +591,36 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
                     Ninguna categoría admite tu edad ({{ computedAge }} años) o todas están llenas.
                   </span>
                 </div>
+              </div>
+
+              <!-- Configurable fields (KAN-45). Rendered only when the
+                   organization has published a schema; otherwise nothing here
+                   appears and the form is exactly the one above. -->
+              <div v-if="hasDynamicFields" class="space-y-4 pt-2 border-t">
+                <div class="space-y-1">
+                  <h3 class="text-sm font-medium">Información adicional</h3>
+                  <p class="text-xs text-muted-foreground">
+                    Preguntas específicas de este concurso.
+                  </p>
+                </div>
+
+                <DynamicFormRenderer
+                  :fields="dynamicFields"
+                  :model-value="dynamicResponses"
+                  :disabled="submitting"
+                  @update:model-value="onDynamicUpdate"
+                  @field-change="onDynamicFieldChange"
+                  @field-blur="validateDynamicField"
+                />
+
+                <ul
+                  v-if="dynamicErrorList.length"
+                  class="space-y-1 text-xs text-destructive"
+                >
+                  <li v-for="e in dynamicErrorList" :key="e.id">
+                    <span class="font-medium">{{ e.label }}:</span> {{ e.message }}
+                  </li>
+                </ul>
               </div>
 
               <Button

@@ -1,43 +1,32 @@
 # 🎯 Inscriptions UX - Quick Reference
 
-## ✅ What's Been Implemented
+## Estado real
 
-### 1. Database Schema (`0032_inscription_form_builder.sql`)
-- ✅ `inscription_form_schemas` table for storing custom forms
-- ✅ `participant_form_responses` table for storing submissions
-- ✅ `get_inscription_form_schema()` RPC function
-- ✅ `validate_form_response()` RPC function
-- ✅ RLS policies for security
+Esta página describía como terminado un constructor de formularios que nunca
+llegó a montarse en ninguna ruta. Lo de abajo separa lo que existe y está
+cableado de lo que todavía no, y enlaza la issue que cierra cada hueco. Si
+añades una pieza, mueve la fila — no marques nada como hecho antes de tiempo.
 
-### 2. TypeScript Types (`types/inscription-form.ts`)
-- ✅ `FormField` types (text, textarea, number, select, checkbox, file, etc.)
-- ✅ `InscriptionFormSchema` interface
-- ✅ `INSCRIPTION_STATUS_CONFIG` for contest status UI mapping
-- ✅ Validation error types
+### Cableado
 
-### 3. Composables (`app/composables/useInscriptionForm.ts`)
-- ✅ Form state management
-- ✅ Field CRUD operations
-- ✅ Validation engine
-- ✅ Response tracking
-- ✅ Schema import/export
+| Pieza | Fichero | Notas |
+|--|--|--|
+| Contrato de tipos | `shared/inscription-form.ts` | Fuente única. `app/types/inscription-form.ts` lo reexporta y añade lo que solo usa la UI, así que `~/types/inscription-form` sigue valiendo. `server/` importa el de `shared/`. |
+| Migración | `supabase/migrations/0033_inscription_form_builder.sql` | Tablas `inscription_form_schemas` y `participant_form_responses`, RPCs `get_inscription_form_schema()` y `validate_form_response()`, políticas RLS. |
+| Composable | `app/composables/useInscriptionForm.ts` | Estado de campos, CRUD, motor de validación, import/export de schema. |
+| Renderer | `app/components/inscription/DynamicFormRenderer.vue` | Pinta un `FormField[]`. Acepta `errors` por `field.id` y los cablea a `aria-invalid`/`aria-describedby`. |
+| Constructor | `app/components/inscription/FormBuilder.vue` | Paleta de tipos, configuración por campo, reordenado por arrastre nativo **y** por botones ↑/↓ (KAN-50). |
+| Pestaña de organizador | `app/components/inscription/InscriptionFormTab.vue` | Carga, guarda y publica. Montada en `app/pages/contests/[slug]/inscriptions.vue`, pestaña «Formulario» (KAN-41). |
+| Endpoints de organizador | `server/api/contests/[id]/form-schema.{get,post,publish}.post.ts` | Cerrados con `requireOrgOwnerOrMember`. |
 
-### 4. Components
-- ✅ `DynamicFormRenderer.vue` - Renders custom forms
-- ✅ `FormBuilder.vue` - Drag-and-drop form builder UI
+### Sin cablear
 
-### 5. Pages
-- ✅ Updated `join/[token]/index.vue` with:
-  - Contest status checking
-  - Status-based UI states
-  - Custom form rendering
-  - Progress indicator
-  - Validation display
-
-### 6. API Endpoints
-- ✅ `GET /api/contests/[id]/form-schema` - Get schema
-- ✅ `POST /api/contests/[id]/form-schema` - Save schema
-- ✅ `POST /api/contests/[id]/form-schema.publish` - Publish schema
+| Hueco | Issue |
+|--|--|
+| El formulario público de `app/pages/join/[token]/index.vue` sigue con los campos fijos: no renderiza el schema. | KAN-45 |
+| No hay endpoint público que sirva el schema publicado a la página de inscripción. | KAN-45 |
+| Las respuestas del participante no se guardan en `participant_form_responses`. | KAN-45 |
+| El tipo de campo `file` está deshabilitado en la paleta: no hay subida ni almacenamiento. | KAN-59 |
 
 ---
 
@@ -102,25 +91,30 @@ Settings (modal on click):
 - Width (full/half/third)
 ```
 
-**Field Types to Support:**
-- ✅ text, textarea, number, email, phone, date
-- ✅ select, radio, checkbox, checkbox-group
-- ✅ file, url
+**Field Types:**
+- Disponibles: text, textarea, number, email, phone, date, select, radio,
+  checkbox, checkbox-group, url
+- Deshabilitado en la paleta: `file` — el tipo existe en el contrato y el
+  constructor sabe configurarlo, pero no hay subida ni almacenamiento hasta
+  KAN-59, así que ofrecerlo guardaría un campo que no recoge nada.
 
 **Features:**
-- ✅ Required/optional toggle
-- ✅ Field ordering (up/down arrows)
-- ✅ Duplicate field
-- ✅ Hide/show field
-- ✅ Validation rules per field
+- Required/optional toggle
+- Reordenado por arrastre (HTML Drag and Drop nativo) y por botones ↑/↓;
+  los botones son la ruta accesible y los movimientos se anuncian por
+  `aria-live`
+- Duplicate field
+- Hide/show field
+- Validation rules per field
 
 ### 4. Dynamic Form Rendering
 
 **Component Structure:**
 ```vue
 <DynamicFormRenderer
-  :fields="formSchema"
   v-model="responses"
+  :fields="formSchema"
+  :errors="errors"
   @field-blur="validateField"
 />
 ```
@@ -180,80 +174,61 @@ button, input {
 
 ---
 
-## 🚀 Next Steps
+## Pendiente
 
-### Immediate (To Complete Implementation)
+### KAN-45 — formulario público dinámico
 
-1. **Run Database Migration**
-```bash
-# Apply the new migration
-npx supabase db push --include-all
-# Or manually run 0032_inscription_form_builder.sql
-```
+1. Endpoint público que devuelva el schema publicado del concurso
+   (`PublishedFormSchema` del contrato: `id`, `version`, `publishedAt`,
+   `fields`). Un concurso sin formulario publicado responde con nulos y un
+   array vacío: es un estado normal, no un error.
+2. `app/pages/join/[token]/index.vue` monta `DynamicFormRenderer` con esos
+   campos y le pasa `errors` por `field.id`.
+3. `server/api/public/inscriptions/[token]/` guarda las respuestas en
+   `participant_form_responses`, con `form_schema_id` apuntando al schema
+   que el participante vio.
 
-2. **Create Organizer UI Page**
-```vue
-<!-- app/pages/contest/[slug]/settings/inscriptions-form.vue -->
-<script setup>
-const { params } = useRoute()
-const formSchema = ref([])
+### KAN-59 — campos de archivo
 
-async function saveSchema(fields) {
-  await $fetch(`/api/contests/${params.slug}/form-schema`, {
-    method: 'POST',
-    body: { fields }
-  })
-}
-</script>
+Subida a Storage y persistencia de `FormFileReference`. Hasta entonces el
+tipo `file` está deshabilitado en la paleta del constructor.
 
-<template>
-  <FormBuilder 
-    :initial-fields="formSchema"
-    @save="saveSchema"
-  />
-</template>
-```
+### Más adelante
 
-3. **Update Enrollment API**
-```typescript
-// server/api/public/inscriptions/[token]/enroll.post.ts
-// Add custom_fields to the enroll_participant RPC call
-```
-
-### Phase 2 (Enhancements)
-
-- [ ] Add drag-and-drop reordering (`@vueuse/core` useDraggable)
-- [ ] Implement preview mode modal
-- [ ] Add i18n support for field labels
-- [ ] Create form response viewer for organizers
-- [ ] Add export to CSV functionality
-
-### Phase 3 (Optimization)
-
-- [ ] Virtual scrolling for 50+ fields
-- [ ] Debounced auto-save
-- [ ] Schema caching
-- [ ] Accessibility audit
-- [ ] Performance testing
+- [ ] i18n de etiquetas de campo (`labelTranslations` ya está en el contrato).
+- [ ] Visor de respuestas para el organizador y exportación a CSV.
+- [ ] Auto-guardado con debounce en el constructor.
+- [ ] Virtualizar la lista de campos si un formulario pasa de ~50.
 
 ---
 
-## 📁 Files Created
+## Semántica de versiones (importante)
+
+`form-schema.post` **no actualiza: inserta una versión nueva**
+(`newVersion = (actual?.version || 0) + 1`). `form-schema.publish` publica
+siempre **la de versión más alta**. Publicar sin guardar antes publicaría una
+versión antigua, así que la UI bloquea la acción mientras haya cambios sin
+guardar. `form-schema.get` devuelve la versión más alta sea borrador o
+publicada; el estado se lee de `is_published`, no de que exista la fila.
+
+---
+
+## Mapa de ficheros
 
 ```
-types/inscription-form.ts                          ✅ 250 lines
-app/composables/useInscriptionForm.ts              ✅ 280 lines
-app/components/inscription/DynamicFormRenderer.vue ✅ 250 lines
-app/components/inscription/FormBuilder.vue         ✅ 450 lines
-app/pages/join/[token]/index.vue                   ✅ Updated
-supabase/migrations/0032_inscription_form_builder.sql ✅ 200 lines
-server/api/contests/[id]/form-schema.get.ts        ✅ Created
-server/api/contests/[id]/form-schema.post.ts       ✅ Created
-server/api/contests/[id]/form-schema.publish.post.ts ✅ Created
-docs/INSCRIPTIONS_UX_IMPROVEMENTS.md               ✅ 600 lines
+shared/inscription-form.ts                            contrato (fuente única)
+app/types/inscription-form.ts                         reexport + tipos de UI
+app/composables/useInscriptionForm.ts                 estado y validación
+app/components/inscription/DynamicFormRenderer.vue    render de campos
+app/components/inscription/FormBuilder.vue            constructor
+app/components/inscription/InscriptionFormTab.vue     pestaña de organizador
+app/pages/contests/[slug]/inscriptions.vue            monta la pestaña
+server/api/contests/[id]/form-schema.get.ts
+server/api/contests/[id]/form-schema.post.ts
+server/api/contests/[id]/form-schema.publish.post.ts
+supabase/migrations/0033_inscription_form_builder.sql
+docs/INSCRIPTIONS_UX_IMPROVEMENTS.md                  guía larga
 ```
-
-**Total: ~2,500 lines of new code**
 
 ---
 
@@ -283,10 +258,12 @@ shadow-lg, rounded-lg, border, transition-colors
 ## 🔧 Dependencies
 
 Already installed (no new packages needed):
-- ✅ `lucide-vue-next` - Icons
-- ✅ `@internationalized/date` - Date handling
-- ✅ `@vueuse/core` - Composables (for future drag-drop)
-- ✅ `class-variance-authority` - Variant management
+- `lucide-vue-next` - Icons
+- `@internationalized/date` - Date handling
+- `@vueuse/core` - Composables. No se usa para reordenar: `useDraggable`
+  arrastra un elemento por posición absoluta, no reordena listas. El
+  constructor usa la HTML Drag and Drop API nativa.
+- `class-variance-authority` - Variant management
 
 ---
 

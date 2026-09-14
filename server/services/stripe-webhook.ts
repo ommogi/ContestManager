@@ -1,6 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
 import type Stripe from 'stripe'
 import { sendEnrollmentEmail } from '~~/server/utils/email'
+// Relative on purpose: vitest does not resolve Nitro's `~~/` alias, and unlike
+// the email util this one is exercised rather than mocked in the tests.
+import {
+  markPendingFormResponsesConsumed,
+  persistParticipantFormResponses,
+  readPendingFormResponses,
+} from '../utils/inscription-form-responses'
 
 export type SupabaseAdmin = ReturnType<typeof createClient>
 
@@ -81,6 +88,36 @@ export async function handleEnrollment(admin: SupabaseAdmin, evt: Stripe.Event, 
     p_amount_cents:    session.amount_total ?? 0,
   })
   if (error) throw new Error(`enroll_participant_paid: ${error.message}`)
+
+  // ── Configurable form answers (KAN-49) ─────────────────────────────────────
+  //
+  // Runs inside the block the route guards with `processed_stripe_events`, and
+  // deliberately *before* the email: if this throws, the route drops the
+  // idempotency row and answers 500, Stripe redelivers, and the whole handler
+  // runs again. That is safe because both writes are idempotent —
+  // `enroll_participant_paid` returns the existing participant for a session it
+  // has already seen, and the upsert resolves `UNIQUE(participant_id,
+  // form_schema_id)` instead of raising 23505. So a redelivery repairs a failed
+  // write rather than duplicating a successful one, and a paid inscription
+  // never ends up with its answers silently missing.
+  const participantId = typeof data === 'string' ? data : null
+  const draftId = m.form_draft_id
+
+  if (draftId && participantId) {
+    const submission = await readPendingFormResponses(admin, draftId)
+    if (submission) {
+      await persistParticipantFormResponses(admin, participantId, submission)
+      await markPendingFormResponsesConsumed(admin, draftId)
+    } else {
+      // The draft is gone (pruned, or its schema was deleted). Retrying cannot
+      // bring it back, so record it loudly and let the paid enrollment stand
+      // rather than making Stripe redeliver forever.
+      console.error(
+        `[webhook] form draft ${draftId} not found for participant ${participantId}; ` +
+        'paid enrollment kept without form responses',
+      )
+    }
+  }
 
   // Fire-and-forget confirmation email
   const recipient = m.email || session.customer_email || session.customer_details?.email

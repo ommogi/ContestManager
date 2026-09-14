@@ -12,23 +12,54 @@ vi.mock('~~/server/utils/email', () => ({
   sendEnrollmentEmail: vi.fn().mockResolvedValue({ sent: true, id: 'email-123' }),
 }))
 
+/**
+ * Every write the handler makes, recorded per table.
+ *
+ * Shared by the enrollment tests so the form-response assertions can prove
+ * *which* statement ran — an upsert with an onConflict target, not an insert.
+ */
+interface AdminCalls {
+  upserts: Array<{ table: string; values: any; options: any }>
+  inserts: Array<{ table: string; values: any }>
+  updates: Array<{ table: string; values: any }>
+}
+
 function createMockAdmin(overrides: {
   rpc?: (name: string, args: any) => Promise<{ data?: any; error?: any }>
   fromSelectSingle?: any
+  /** Row returned by `pending_form_responses … maybeSingle()`. */
+  pendingRow?: any
+  calls?: AdminCalls
 } = {}): SupabaseAdmin {
   const rpcFn = overrides.rpc ?? (() => Promise.resolve({ data: null, error: null }))
+  const calls = overrides.calls
   return {
     rpc: vi.fn(rpcFn),
     from: vi.fn((table: string) => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
           single: vi.fn(() => Promise.resolve({ data: overrides.fromSelectSingle ?? null, error: null })),
+          maybeSingle: vi.fn(() => Promise.resolve({ data: overrides.pendingRow ?? null, error: null })),
         })),
       })),
-      update: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })),
-      insert: vi.fn(() => Promise.resolve({ error: null })),
+      update: vi.fn((values: any) => {
+        calls?.updates.push({ table, values })
+        return { eq: vi.fn(() => Promise.resolve({ error: null })) }
+      }),
+      insert: vi.fn((values: any) => {
+        calls?.inserts.push({ table, values })
+        return Promise.resolve({ error: null })
+      }),
+      upsert: vi.fn((values: any, options: any) => {
+        calls?.upserts.push({ table, values, options })
+        return Promise.resolve({ error: null })
+      }),
     })),
   } as unknown as SupabaseAdmin
+}
+
+function emptyCalls(): AdminCalls {
+  return { upserts: [], inserts: [], updates: [] }
 }
 
 function sessionBase(payment_status: string, metadata: Record<string, string> = {}): any {
@@ -172,5 +203,132 @@ describe('handleEnrollment', () => {
     await expect(
       handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
     ).rejects.toThrow('enroll_participant_paid: dup')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Configurable form answers on the paid path (KAN-49)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SCHEMA_ID = 'ssssssss-0000-4000-8000-000000000001'
+
+function enrollmentSession(extraMetadata: Record<string, string> = {}) {
+  return sessionBase('paid', {
+    token: 'tok',
+    user_id: 'u1',
+    category_id: 'c1',
+    first_name: 'Ana',
+    last_name: 'García',
+    birthdate: '2000-01-01',
+    email: 'ana@example.com',
+    ...extraMetadata,
+  })
+}
+
+describe('handleEnrollment · form responses', () => {
+  it('writes nothing to participant_form_responses without a form_draft_id', async () => {
+    // A contest with no published form must behave exactly as it did before.
+    const calls = emptyCalls()
+    const admin = createMockAdmin({ rpc: () => Promise.resolve({ data: 'part-1', error: null }), calls })
+    const session = enrollmentSession()
+    await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+
+    expect(calls.upserts).toHaveLength(0)
+    expect(calls.inserts.filter(c => c.table === 'participant_form_responses')).toHaveLength(0)
+  })
+
+  it('resolves the draft and stores the answers against the participant', async () => {
+    const calls = emptyCalls()
+    const admin = createMockAdmin({
+      rpc: () => Promise.resolve({ data: 'part-1', error: null }),
+      pendingRow: { form_schema_id: SCHEMA_ID, responses_json: { bio: 'hola', talla: 'M' } },
+      calls,
+    })
+    const session = enrollmentSession({ form_draft_id: 'draft-1' })
+    const res = await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+
+    expect(res).toEqual({ participant_id: 'part-1' })
+    expect(calls.upserts).toEqual([{
+      table: 'participant_form_responses',
+      values: {
+        participant_id: 'part-1',
+        form_schema_id: SCHEMA_ID,
+        responses_json: { bio: 'hola', talla: 'M' },
+      },
+      options: { onConflict: 'participant_id,form_schema_id' },
+    }])
+    // The draft is stamped, not deleted — a later redelivery can still read it.
+    expect(calls.updates.some(c => c.table === 'pending_form_responses' && c.values.consumed_at))
+      .toBe(true)
+  })
+
+  it('carries a 5.000-character answer through without it ever entering metadata', async () => {
+    const long = 'á'.repeat(5000)
+    const calls = emptyCalls()
+    const admin = createMockAdmin({
+      rpc: () => Promise.resolve({ data: 'part-1', error: null }),
+      pendingRow: { form_schema_id: SCHEMA_ID, responses_json: { bio: long } },
+      calls,
+    })
+    const session = enrollmentSession({ form_draft_id: 'draft-1' })
+
+    // Stripe's own cap: 50 keys, 40-char keys, 500-char values. The long answer
+    // travels in the database row, so the session stays inside all three.
+    const metadata = session.metadata as Record<string, string>
+    expect(Object.keys(metadata).length).toBeLessThanOrEqual(50)
+    for (const [key, value] of Object.entries(metadata)) {
+      expect(key.length).toBeLessThanOrEqual(40)
+      expect(String(value).length).toBeLessThanOrEqual(500)
+    }
+
+    await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+
+    expect(calls.upserts[0]!.values.responses_json.bio).toHaveLength(5000)
+  })
+
+  it('does not duplicate rows when Stripe redelivers the same event', async () => {
+    // `enroll_participant_paid` is idempotent by session id, so the redelivery
+    // arrives with the same participant. The write must be an upsert on the
+    // unique pair or the retry would raise 23505 and 500 forever.
+    const calls = emptyCalls()
+    const admin = createMockAdmin({
+      rpc: () => Promise.resolve({ data: 'part-1', error: null }),
+      pendingRow: { form_schema_id: SCHEMA_ID, responses_json: { bio: 'hola' } },
+      calls,
+    })
+    const session = enrollmentSession({ form_draft_id: 'draft-1' })
+    const evt = eventBase('checkout.session.completed', session)
+
+    const first = await handleEnrollment(admin, evt, session)
+    const second = await handleEnrollment(admin, evt, session)
+
+    expect(second).toEqual(first)
+    expect(calls.inserts.filter(c => c.table === 'participant_form_responses')).toHaveLength(0)
+    expect(calls.upserts).toHaveLength(2)
+    for (const call of calls.upserts) {
+      expect(call.table).toBe('participant_form_responses')
+      expect(call.options).toEqual({ onConflict: 'participant_id,form_schema_id' })
+      expect(call.values).toEqual({
+        participant_id: 'part-1',
+        form_schema_id: SCHEMA_ID,
+        responses_json: { bio: 'hola' },
+      })
+    }
+  })
+
+  it('keeps the paid enrollment when the draft has vanished', async () => {
+    // Retrying cannot resurrect a pruned draft; failing here would only make
+    // Stripe redeliver something that can never succeed.
+    const calls = emptyCalls()
+    const admin = createMockAdmin({
+      rpc: () => Promise.resolve({ data: 'part-1', error: null }),
+      pendingRow: null,
+      calls,
+    })
+    const session = enrollmentSession({ form_draft_id: 'draft-gone' })
+    const res = await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+
+    expect(res).toEqual({ participant_id: 'part-1' })
+    expect(calls.upserts).toHaveLength(0)
   })
 })
