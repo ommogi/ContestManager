@@ -29,8 +29,20 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'La invitación ya ha sido respondida.' })
   }
 
+  // KAN-40: a resend issues a new token and a new window; the previous link
+  // dies with it. See the contest-member resend for why.
+  const { data: rotated, error: rotateError } = await admin
+    .rpc('rotate_judge_pool_invitation', { p_invitation_id: invitation.id })
+
+  if (rotateError) {
+    throw internalError(event, rotateError, 'rpc:rotate_judge_pool_invitation')
+  }
+  if (!rotated) {
+    throw createError({ statusCode: 409, statusMessage: 'La invitación ya ha sido respondida.' })
+  }
+
   // Fire-and-forget resend email
-  const token = invitation.invitation_token as string
+  const token = rotated as string
   const baseUrl = process.env.APP_BASE_URL || 'https://contestsaas.app'
   const inviteUrl = `${baseUrl}/invite/pool/${token}`
 

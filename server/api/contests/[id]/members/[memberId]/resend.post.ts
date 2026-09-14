@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { internalError, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { sendJudgeInvitationEmail } from '~~/server/utils/email'
 
 export default defineEventHandler(async (event) => {
@@ -35,8 +35,23 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Invitation missing email or token' })
   }
 
+  // KAN-40: resending rotates the token and opens a fresh window, so the link
+  // that was already out there stops working. Re-sending the same token made
+  // resend useless against the case this guards: a leaked invitation the
+  // organizer had no way to kill.
+  const { data: rotated, error: rotateError } = await admin
+    .rpc('rotate_contest_member_invitation', { p_member_id: member.id })
+
+  if (rotateError) {
+    throw internalError(event, rotateError, 'rpc:rotate_contest_member_invitation')
+  }
+  if (!rotated) {
+    // The row stopped being pending between the read above and this write.
+    throw createError({ statusCode: 409, statusMessage: 'Invitation already answered' })
+  }
+
   const baseUrl   = process.env.APP_BASE_URL || 'https://contestsaas.app'
-  const inviteUrl = `${baseUrl}/invite/${member.invitation_token}`
+  const inviteUrl = `${baseUrl}/invite/${rotated as string}`
 
   const { data: contest } = await admin
     .from('contests')

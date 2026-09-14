@@ -1,5 +1,6 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { serverSupabaseAdmin } from '~~/server/utils/supabase'
+import { assertInvitationNotExpired } from '~~/server/utils/invitation-expiry'
 
 export default defineEventHandler(async (event) => {
   const token = getRouterParam(event, 'token')
@@ -9,7 +10,7 @@ export default defineEventHandler(async (event) => {
 
   const { data: invitation, error } = await admin
     .from('judge_pool_invitations')
-    .select('id, organization_id, email, full_name, specialty, invitation_status, invited_at, responded_at')
+    .select('id, organization_id, email, full_name, specialty, invitation_status, invitation_expires_at, invited_at, responded_at')
     .eq('invitation_token', token)
     .maybeSingle()
 
@@ -18,6 +19,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 500, statusMessage: 'internal_error' })
   }
   if (!invitation) throw createError({ statusCode: 404, statusMessage: 'Invitation not found' })
+
+  // 410, distinguishable from the 404 above and the 409 below, so the UI can
+  // offer a resend instead of telling someone to check the link (KAN-40).
+  assertInvitationNotExpired(invitation.invitation_expires_at as string | null)
 
   const { data: org } = await admin
     .from('organizations')
