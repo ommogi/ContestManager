@@ -3,6 +3,8 @@ import { serverSupabaseAdmin, requireAuth, internalError } from '~~/server/utils
 import { getStripe } from '~~/server/utils/stripe'
 import { CheckoutEnrollmentSchema } from '~~/server/utils/schemas'
 import {
+  assertOwnedUploadPaths,
+  collectUploadPaths,
   prepareFormSubmission,
   refreshPendingFormResponses,
   stashPendingFormResponses,
@@ -64,6 +66,17 @@ export default defineEventHandler(async (event) => {
   // Validate the configurable form before Stripe is involved at all (KAN-49):
   // a body that fails the schema must not leave a Checkout Session behind.
   const submission = await prepareFormSubmission(admin, token, parsed.data)
+
+  // Ownership of every referenced object key, before Stripe is touched, for
+  // the same reason as on the free path (KAN-49). The files themselves are
+  // only CONFIRMED once the payment lands — that happens in the webhook, where
+  // the participant row finally exists — so nothing is attached here.
+  if (submission) {
+    assertOwnedUploadPaths(
+      collectUploadPaths(submission.responses),
+      { contestId: submission.contestId, userId: user.id },
+    )
+  }
 
   const effectiveEmail = email || user.email
 

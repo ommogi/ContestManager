@@ -2,7 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import type { FormField } from '../../shared/inscription-form'
 import {
   MAX_RESPONSES_BYTES,
+  assertOwnedUploadPaths,
   coerceFormResponses,
+  collectUploadPaths,
+  confirmInscriptionUploads,
   persistParticipantFormResponses,
   prepareFormSubmission,
   readPendingFormResponses,
@@ -73,14 +76,26 @@ function createMockAdmin(opts: {
   pendingRow?: Record<string, unknown> | null
   selectError?: { message: string } | null
   writeError?: { message: string } | null
+  /**
+   * supabase-js RESOLVES with `{ data, error }`; it never rejects. A mock that
+   * threw would make a missing `if (error)` check look like a passing test, so
+   * this one resolves exactly like the real client.
+   */
+  rpcError?: { message: string } | null
+  rpcData?: unknown
 } = {}) {
   const calls = {
     upserts: [] as Array<{ table: string; values: unknown; options: unknown }>,
     inserts: [] as Array<{ table: string; values: unknown }>,
     updates: [] as Array<{ table: string; values: unknown }>,
+    rpcs: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   }
 
   const admin = {
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.rpcs.push({ fn, args })
+      return Promise.resolve({ data: opts.rpcData ?? null, error: opts.rpcError ?? null })
+    },
     from: (table: string) => ({
       upsert: (values: unknown, options: unknown) => {
         calls.upserts.push({ table, values, options })
@@ -175,7 +190,7 @@ describe('prepareFormSubmission', () => {
       form_schema_id: SCHEMA_ID,
       responses: { bio: 'hola', injected: 'no debería guardarse' },
     })
-    expect(submission).toEqual({ formSchemaId: SCHEMA_ID, responses: { bio: 'hola' } })
+    expect(submission).toEqual({ contestId: CONTEST_ID, formSchemaId: SCHEMA_ID, responses: { bio: 'hola' } })
   })
 
   it('accepts a 5.000-character textarea', async () => {
@@ -250,6 +265,7 @@ describe('persistParticipantFormResponses', () => {
   it('upserts on the unique pair rather than inserting', async () => {
     const { admin, calls } = createMockAdmin()
     await persistParticipantFormResponses(admin, 'part-1', {
+      contestId: CONTEST_ID,
       formSchemaId: SCHEMA_ID,
       responses: { bio: 'hola' },
     })
@@ -269,7 +285,7 @@ describe('persistParticipantFormResponses', () => {
     // supabase-js resolves with `{ error }`; a try/catch here would catch nothing.
     const { admin } = createMockAdmin({ writeError: { message: 'permission denied' } })
     await expect(
-      persistParticipantFormResponses(admin, 'part-1', { formSchemaId: SCHEMA_ID, responses: {} }),
+      persistParticipantFormResponses(admin, 'part-1', { contestId: CONTEST_ID, formSchemaId: SCHEMA_ID, responses: {} }),
     ).rejects.toThrow('participant_form_responses: permission denied')
   })
 })
@@ -281,7 +297,7 @@ describe('stashPendingFormResponses', () => {
     const draftId = await stashPendingFormResponses(admin, {
       contestId: CONTEST_ID,
       userId: 'u1',
-      submission: { formSchemaId: SCHEMA_ID, responses: { bio: long } },
+      submission: { contestId: CONTEST_ID, formSchemaId: SCHEMA_ID, responses: { bio: long } },
     })
 
     // Stripe caps a metadata value at 500 characters; a uuid is 36.
@@ -304,7 +320,7 @@ describe('stashPendingFormResponses', () => {
       stashPendingFormResponses(admin, {
         contestId: CONTEST_ID,
         userId: null,
-        submission: { formSchemaId: SCHEMA_ID, responses: {} },
+        submission: { contestId: CONTEST_ID, formSchemaId: SCHEMA_ID, responses: {} },
       }),
     ).rejects.toThrow('pending_form_responses insert: disk full')
   })
@@ -314,6 +330,7 @@ describe('refreshPendingFormResponses', () => {
   it('overwrites the draft a reused checkout session points at', async () => {
     const { admin, calls } = createMockAdmin()
     await refreshPendingFormResponses(admin, 'draft-1', {
+      contestId: CONTEST_ID,
       formSchemaId: SCHEMA_ID,
       responses: { bio: 'nueva respuesta' },
     })
@@ -327,9 +344,10 @@ describe('refreshPendingFormResponses', () => {
 describe('readPendingFormResponses', () => {
   it('resolves a draft id back into answers', async () => {
     const { admin } = createMockAdmin({
-      pendingRow: { form_schema_id: SCHEMA_ID, responses_json: { bio: 'hola' } },
+      pendingRow: { contest_id: CONTEST_ID, form_schema_id: SCHEMA_ID, responses_json: { bio: 'hola' } },
     })
     await expect(readPendingFormResponses(admin, 'draft-1')).resolves.toEqual({
+      contestId: CONTEST_ID,
       formSchemaId: SCHEMA_ID,
       responses: { bio: 'hola' },
     })
@@ -345,5 +363,170 @@ describe('readPendingFormResponses', () => {
     await expect(readPendingFormResponses(admin, 'draft-1')).rejects.toThrow(
       'pending_form_responses select: timeout',
     )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Uploaded files (KAN-49)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const USER_ID = 'uuuuuuuu-0000-4000-8000-000000000001'
+
+/** A key exactly as `buildUploadPath` writes it. */
+function uploadPath(
+  fileName: string,
+  owner: { contestId?: string; userId?: string; fieldId?: string } = {},
+): string {
+  return [
+    owner.contestId ?? CONTEST_ID,
+    owner.userId ?? USER_ID,
+    owner.fieldId ?? 'partitura',
+    `11111111-2222-4333-8444-555555555555-${fileName}`,
+  ].join('/')
+}
+
+function fileRef(path: string) {
+  return {
+    path,
+    name: 'partitura.pdf',
+    size: 1024,
+    mimeType: 'application/pdf',
+    uploadedAt: '2026-05-01T10:00:00Z',
+  }
+}
+
+describe('collectUploadPaths', () => {
+  it('collects the path of every file reference across every field', () => {
+    const a = uploadPath('a.pdf')
+    const b = uploadPath('b.pdf', { fieldId: 'foto' })
+    expect(collectUploadPaths({
+      bio: 'texto',
+      partitura: [fileRef(a)],
+      foto: [fileRef(b)],
+    })).toEqual([a, b])
+  })
+
+  it('returns an empty list when the form references no file', () => {
+    expect(collectUploadPaths({ bio: 'hola', talla: 'M', acepto: true })).toEqual([])
+  })
+
+  it('ignores a plain string array, which is a checkbox-group and not a file', () => {
+    expect(collectUploadPaths({ estilos: ['barroco', 'romantico'] })).toEqual([])
+  })
+
+  it('deduplicates a path referenced twice', () => {
+    const a = uploadPath('a.pdf')
+    expect(collectUploadPaths({ uno: [fileRef(a)], dos: [fileRef(a)] })).toEqual([a])
+  })
+
+  it('drops a reference with an empty path rather than confirming nothing', () => {
+    expect(collectUploadPaths({ partitura: [fileRef('')] })).toEqual([])
+  })
+})
+
+describe('assertOwnedUploadPaths', () => {
+  const owner = { contestId: CONTEST_ID, userId: USER_ID }
+
+  it('accepts a key written for this user and this contest', () => {
+    expect(() => assertOwnedUploadPaths([uploadPath('a.pdf')], owner)).not.toThrow()
+  })
+
+  it('accepts an empty list', () => {
+    expect(() => assertOwnedUploadPaths([], owner)).not.toThrow()
+  })
+
+  it('rejects a key belonging to another user', () => {
+    // validateFileField only counts references, so without this check a
+    // participant could store somebody else's object key in their own
+    // responses_json. Downloading it would still 404 (form-file.get.ts looks
+    // up by participant AND path), so this stops the poisoned row, not a live
+    // read — see the note on assertOwnedUploadPaths.
+    const foreign = uploadPath('dni.pdf', { userId: 'uuuuuuuu-0000-4000-8000-000000000002' })
+    expect(() => assertOwnedUploadPaths([foreign], owner)).toThrow()
+    try {
+      assertOwnedUploadPaths([foreign], owner)
+    } catch (e) {
+      expect((e as { statusCode?: number }).statusCode).toBe(400)
+    }
+  })
+
+  it('rejects a key belonging to another contest', () => {
+    const foreign = uploadPath('a.pdf', { contestId: 'cccccccc-0000-4000-8000-000000000002' })
+    expect(() => assertOwnedUploadPaths([foreign], owner)).toThrow()
+  })
+
+  it('rejects a malformed key, including traversal', () => {
+    expect(() => assertOwnedUploadPaths(['../../etc/passwd'], owner)).toThrow()
+    expect(() => assertOwnedUploadPaths([`${CONTEST_ID}/${USER_ID}/x`], owner)).toThrow()
+    expect(() => assertOwnedUploadPaths([''], owner)).toThrow()
+  })
+
+  it('rejects the whole submission when only one of several keys is foreign', () => {
+    const mine = uploadPath('a.pdf')
+    const foreign = uploadPath('b.pdf', { userId: 'uuuuuuuu-0000-4000-8000-000000000002' })
+    expect(() => assertOwnedUploadPaths([mine, foreign], owner)).toThrow()
+  })
+})
+
+describe('confirmInscriptionUploads', () => {
+  it('calls the 0054 RPC with the contest, the user, the participant and the paths', async () => {
+    const path = uploadPath('a.pdf')
+    const { admin, calls } = createMockAdmin({ rpcData: 1 })
+
+    const confirmed = await confirmInscriptionUploads(admin, {
+      contestId: CONTEST_ID,
+      userId: USER_ID,
+      participantId: 'part-1',
+      paths: [path],
+    })
+
+    expect(confirmed).toBe(1)
+    expect(calls.rpcs).toEqual([{
+      fn: 'confirm_inscription_uploads',
+      args: {
+        p_contest_id: CONTEST_ID,
+        p_user_id: USER_ID,
+        p_participant_id: 'part-1',
+        p_paths: [path],
+      },
+    }])
+  })
+
+  it('still calls the RPC with an empty list, which is what purges the discards', async () => {
+    // `confirm_inscription_uploads` marks everything this user uploaded for
+    // this contest and did NOT reference as purgeable. An empty list means
+    // "they attached files and then removed them all".
+    const { admin, calls } = createMockAdmin({ rpcData: 0 })
+    await confirmInscriptionUploads(admin, {
+      contestId: CONTEST_ID,
+      userId: USER_ID,
+      participantId: 'part-1',
+      paths: [],
+    })
+    expect(calls.rpcs).toHaveLength(1)
+    expect(calls.rpcs[0]!.args.p_paths).toEqual([])
+  })
+
+  it('throws on the resolved supabase error instead of ignoring it', async () => {
+    // The mock RESOLVES with `{ data, error }` like the real client. If the
+    // implementation relied on a try/catch this test would fail, which is the
+    // point: a try/catch around a supabase-js call never runs.
+    const { admin } = createMockAdmin({ rpcError: { message: 'function does not exist' } })
+    await expect(confirmInscriptionUploads(admin, {
+      contestId: CONTEST_ID,
+      userId: USER_ID,
+      participantId: 'part-1',
+      paths: [uploadPath('a.pdf')],
+    })).rejects.toThrow('confirm_inscription_uploads: function does not exist')
+  })
+
+  it('reports zero when the RPC answers with a non-numeric body', async () => {
+    const { admin } = createMockAdmin({ rpcData: null })
+    await expect(confirmInscriptionUploads(admin, {
+      contestId: CONTEST_ID,
+      userId: USER_ID,
+      participantId: 'part-1',
+      paths: [],
+    })).resolves.toBe(0)
   })
 })
