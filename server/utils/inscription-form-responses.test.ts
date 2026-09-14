@@ -436,9 +436,11 @@ describe('assertOwnedUploadPaths', () => {
   })
 
   it('rejects a key belonging to another user', () => {
-    // The hole this closes: validateFileField only counts references, so
-    // without this check a participant could store somebody else's object key
-    // in their own responses_json and have the organizer's viewer sign it.
+    // validateFileField only counts references, so without this check a
+    // participant could store somebody else's object key in their own
+    // responses_json. Downloading it would still 404 (form-file.get.ts looks
+    // up by participant AND path), so this stops the poisoned row, not a live
+    // read — see the note on assertOwnedUploadPaths.
     const foreign = uploadPath('dni.pdf', { userId: 'uuuuuuuu-0000-4000-8000-000000000002' })
     expect(() => assertOwnedUploadPaths([foreign], owner)).toThrow()
     try {

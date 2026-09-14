@@ -227,17 +227,26 @@ export function collectUploadPaths(responses: FormResponses): string[] {
  *
  * The object key is `{contest_id}/{user_id}/{field_id}/{uuid}-{name}` and
  * `buildUploadPath` is its only writer, so the first two segments are an
- * ownership claim the server can check for free. Nothing else checks it:
- * `validateFileField` only counts the references, so without this a
- * participant could post a path belonging to somebody else's upload, have it
- * stored in their own `responses_json`, and have the organizer's viewer mint a
- * signed URL for a stranger's scanned ID.
+ * ownership claim the server can check for free.
  *
- * `confirm_inscription_uploads` would refuse to confirm such a path anyway —
- * it filters on `contest_id` and `user_id` — so this is the layer that stops
- * the reference being *stored*, not the layer that stops it being confirmed.
- * Loud 400 rather than a silent strip: a path that fails this check is either
- * forged or a bug, and neither should be swallowed.
+ * Defence in depth, deliberately, not the only barrier — be clear about what
+ * this does and does not add:
+ *
+ *  · `validateFileField` only COUNTS file references, so nothing upstream
+ *    stops a crafted request from putting somebody else's object key into its
+ *    own `responses_json`. This is what stops that reference being stored.
+ *  · Such a key could never be read anyway: `form-file.get.ts` looks the
+ *    ledger row up by `participant_id` AND `path` together, so a forged
+ *    reference resolves to no row and answers 404.
+ *  · Nor could it be attached: `confirm_inscription_uploads` filters on
+ *    `contest_id` and `user_id`, so it can neither confirm nor purge another
+ *    user's object.
+ *
+ * What is prevented is therefore a poisoned `responses_json` — an organizer
+ * shown a file name that can never be downloaded — and the next endpoint that
+ * signs by path without re-checking the ledger. Loud 400 rather than a silent
+ * strip: a path that fails this check is either forged or a bug, and neither
+ * should be swallowed.
  */
 export function assertOwnedUploadPaths(
   paths: string[],
