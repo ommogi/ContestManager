@@ -1,3 +1,11 @@
+-- REPAIRED (KAN-61). This migration never applied: it used
+-- `CREATE POLICY IF NOT EXISTS`, which Postgres does not accept, and the
+-- statement took its whole transaction down with it. Production shows the
+-- damage — `organizations.logo_url` exists but `onboarding_done` and the
+-- `org_logos` bucket do not, so the file stopped partway and no one noticed.
+-- Every policy below is now DROP-then-CREATE, which is re-runnable.
+-- What production is still missing is applied by 0055.
+
 -- 0033_onboarding_org_fields.sql
 -- Add contact fields to organizations for onboarding
 -- Add storage bucket for organization logos
@@ -23,19 +31,22 @@ ON CONFLICT (id) DO NOTHING;
 -- ────────────────────────────────────────────────────────────
 
 -- Allow authenticated users to upload to org_logos
-CREATE POLICY IF NOT EXISTS "org_logos: authenticated upload"
+DROP POLICY IF EXISTS "org_logos: authenticated upload" ON storage.objects;
+CREATE POLICY "org_logos: authenticated upload"
   ON storage.objects FOR INSERT
   TO authenticated
   WITH CHECK (bucket_id = 'org_logos');
 
 -- Allow public read (for displaying logos)
-CREATE POLICY IF NOT EXISTS "org_logos: public read"
+DROP POLICY IF EXISTS "org_logos: public read" ON storage.objects;
+CREATE POLICY "org_logos: public read"
   ON storage.objects FOR SELECT
   TO public
   USING (bucket_id = 'org_logos');
 
 -- Allow org owners to update/delete their own logos
-CREATE POLICY IF NOT EXISTS "org_logos: owner update/delete"
+DROP POLICY IF EXISTS "org_logos: owner update/delete" ON storage.objects;
+CREATE POLICY "org_logos: owner update/delete"
   ON storage.objects FOR ALL
   TO authenticated
   USING (

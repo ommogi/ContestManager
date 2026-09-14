@@ -1,3 +1,9 @@
+-- REPAIRED (KAN-61). Same invalid `CREATE POLICY IF NOT EXISTS` as 0037, so
+-- this file never applied either. `public.email_logs` does exist in production,
+-- but it arrived through a separately authored migration recorded as
+-- `email_logs` (20260514085642) — not through this file. Repaired so a fresh
+-- environment can be built from this repo.
+
 -- 0047_email_logs.sql
 -- Audit trail for all transactional emails.
 
@@ -21,7 +27,8 @@ CREATE INDEX IF NOT EXISTS email_logs_created_at_idx ON public.email_logs(create
 
 ALTER TABLE public.email_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "Service role can manage email_logs"
+DROP POLICY IF EXISTS "Service role can manage email_logs" ON public.email_logs;
+CREATE POLICY "Service role can manage email_logs"
   ON public.email_logs
   FOR ALL
   TO service_role
