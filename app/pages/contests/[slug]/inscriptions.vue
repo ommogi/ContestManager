@@ -19,7 +19,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useContestStore } from '@/stores/contest'
 import { useParticipantsStore } from '@/stores/participants'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ImportCsvDialog from '@/components/contest/ImportCsvDialog.vue'
+import InscriptionFormTab from '@/components/inscription/InscriptionFormTab.vue'
 import { apiClient } from '@/api/apiClient'
 
 const route = useRoute()
@@ -315,6 +317,11 @@ function fmtDate(d: string) {
 const registrationOpen = computed(() => (currentContest.value as any)?.registration_open !== false)
 const contestStatus = computed(() => (currentContest.value as any)?.status as string | undefined)
 const contestLocked = computed(() => ['active','finished','cancelled'].includes(contestStatus.value || ''))
+
+// ── Tabs ────────────────────────────────────────────────────────────────────
+// The header actions (copy link, CSV, import) only apply to the participant
+// list, so they hide while the form builder is on screen.
+const activeTab = ref<'participantes' | 'formulario'>('participantes')
 </script>
 
 <template>
@@ -334,7 +341,7 @@ const contestLocked = computed(() => ['active','finished','cancelled'].includes(
         <h1 class="text-2xl font-bold tracking-tight uppercase">Inscripciones</h1>
       </div>
 
-      <div class="flex items-center gap-2 shrink-0">
+      <div v-show="activeTab === 'participantes'" class="flex items-center gap-2 shrink-0">
         <Button
           v-if="!contestLocked"
           variant="outline"
@@ -380,6 +387,17 @@ const contestLocked = computed(() => ['active','finished','cancelled'].includes(
       </div>
     </div>
 
+    <Tabs v-model="activeTab" class="w-full">
+      <TabsList>
+        <TabsTrigger value="participantes">
+          Participantes
+        </TabsTrigger>
+        <TabsTrigger value="formulario">
+          Formulario
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="participantes" class="space-y-6 mt-6">
     <!-- Locked banner when contest active/finished/cancelled -->
     <div
       v-if="contestLocked"
@@ -729,5 +747,15 @@ const contestLocked = computed(() => ['active','finished','cancelled'].includes(
         </p>
       </CardContent>
     </Card>
+      </TabsContent>
+
+      <TabsContent value="formulario" class="mt-6">
+        <InscriptionFormTab
+          v-if="currentContest"
+          :contest-id="currentContest.id"
+          :locked="contestLocked"
+        />
+      </TabsContent>
+    </Tabs>
   </div>
 </template>
