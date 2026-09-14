@@ -4,12 +4,26 @@ import {
   handleTicketsTopup,
   handleActivationsTopup,
   handleEnrollment,
+  processStripeEvent,
 } from './stripe-webhook'
 import type { SupabaseAdmin } from './stripe-webhook'
+import {
+  claimStripeEvent,
+  releaseStripeEvent,
+  wasStripeEventProcessed,
+} from '../utils/stripe-idempotency'
 
 // Mock email util
 vi.mock('~~/server/utils/email', () => ({
   sendEnrollmentEmail: vi.fn().mockResolvedValue({ sent: true, id: 'email-123' }),
+}))
+
+// The ledger is mocked so each test can drive claim/lookup outcomes directly.
+// Its real behaviour is covered in server/utils/stripe-idempotency.test.ts.
+vi.mock('../utils/stripe-idempotency', () => ({
+  wasStripeEventProcessed: vi.fn(),
+  claimStripeEvent: vi.fn(),
+  releaseStripeEvent: vi.fn(),
 }))
 
 /**
@@ -527,5 +541,266 @@ describe('handleEnrollment · confirming uploads', () => {
     await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
 
     expect(confirmCalls(rpcs)[0]!.args.p_contest_id).toBe(CONTEST_ID)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// processStripeEvent — claim + dispatch (KAN-51)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Admin double for the dispatch tests.
+ *
+ * Separate from `createMockAdmin` because these need `update().eq()` to be able
+ * to resolve with an error — the whole point of the change is that a failed
+ * write must no longer be swallowed.
+ */
+function dispatchAdmin(opts: { updateError?: { message: string } } = {}) {
+  const updates: Array<{ table: string; values: any; column: string; value: any }> = []
+  const admin = {
+    rpc: vi.fn(() => Promise.resolve({ data: 'participant-1', error: null })),
+    from: vi.fn((table: string) => ({
+      update: vi.fn((values: any) => ({
+        eq: vi.fn((column: string, value: any) => {
+          updates.push({ table, values, column, value })
+          return Promise.resolve({ error: opts.updateError ?? null })
+        }),
+      })),
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          single: vi.fn(() => Promise.resolve({ data: null, error: null })),
+          maybeSingle: vi.fn(() => Promise.resolve({ data: null, error: null })),
+        })),
+      })),
+      insert: vi.fn(() => Promise.resolve({ error: null })),
+      upsert: vi.fn(() => Promise.resolve({ error: null })),
+    })),
+  } as unknown as SupabaseAdmin
+  return { admin, updates }
+}
+
+const chargeBase = (over: Record<string, any> = {}): any => ({
+  id: 'ch_1',
+  payment_intent: 'pi_123',
+  amount: 1000,
+  amount_refunded: 1000,
+  refunds: { data: [{ id: 're_1' }] },
+  ...over,
+})
+
+const HANDLED = [
+  ['account.updated', { id: 'acct_1', details_submitted: true, charges_enabled: true, payouts_enabled: true }],
+  ['charge.refunded', chargeBase()],
+  ['charge.refund.updated', chargeBase()],
+  ['checkout.session.completed', sessionBase('paid', { organization_id: 'org-1', plan: 'starter' })],
+] as const
+
+describe('processStripeEvent', () => {
+  beforeEach(() => {
+    // Call history is per-test: several assertions below are "this was never
+    // called", which a shared spy would fail for the wrong reason.
+    vi.clearAllMocks()
+    vi.mocked(wasStripeEventProcessed).mockResolvedValue(false)
+    vi.mocked(claimStripeEvent).mockResolvedValue('acquired')
+    vi.mocked(releaseStripeEvent).mockResolvedValue(undefined as never)
+  })
+
+  // The criterion KAN-51 exists for: before this change only checkout was
+  // protected, so a redelivered account.updated or refund ran its handler again.
+  describe('a redelivered event is ignored, whatever its type', () => {
+    for (const [type, object] of HANDLED) {
+      it(`already in the ledger: ${type}`, async () => {
+        vi.mocked(wasStripeEventProcessed).mockResolvedValue(true)
+        const { admin, updates } = dispatchAdmin()
+
+        const res = await processStripeEvent(admin, eventBase(type, object))
+
+        expect(res).toEqual({ received: true, ignored: 'already_processed' })
+        expect(claimStripeEvent).not.toHaveBeenCalled()
+        expect(updates).toHaveLength(0)
+      })
+
+      it(`loses the claim race: ${type}`, async () => {
+        vi.mocked(claimStripeEvent).mockResolvedValue('already_processed')
+        const { admin, updates } = dispatchAdmin()
+
+        const res = await processStripeEvent(admin, eventBase(type, object))
+
+        expect(res).toEqual({ received: true, ignored: 'already_processed' })
+        expect(updates).toHaveLength(0)
+      })
+    }
+  })
+
+  it('claims every handled type before dispatching', async () => {
+    for (const [type, object] of HANDLED) {
+      vi.mocked(claimStripeEvent).mockClear()
+      const { admin } = dispatchAdmin()
+
+      await processStripeEvent(admin, eventBase(type, object))
+
+      expect(claimStripeEvent, `${type} must be claimed`).toHaveBeenCalledWith(admin, 'evt_123', type)
+    }
+  })
+
+  it('acknowledges an unhandled type without touching the ledger', async () => {
+    const { admin } = dispatchAdmin()
+
+    const res = await processStripeEvent(admin, eventBase('invoice.paid', { id: 'in_1' }))
+
+    expect(res).toEqual({ received: true, ignored: 'unhandled_event_type' })
+    expect(claimStripeEvent).not.toHaveBeenCalled()
+  })
+
+  describe('account.updated', () => {
+    it('syncs the Connect flags', async () => {
+      const { admin, updates } = dispatchAdmin()
+      const acc = { id: 'acct_1', details_submitted: true, charges_enabled: true, payouts_enabled: false }
+
+      const res = await processStripeEvent(admin, eventBase('account.updated', acc))
+
+      expect(res).toMatchObject({ received: true, synced: true })
+      expect(updates).toHaveLength(1)
+      expect(updates[0]).toMatchObject({
+        table: 'organizations',
+        column: 'stripe_account_id',
+        value: 'acct_1',
+        values: { stripe_onboarding_done: true, stripe_charges_enabled: true, stripe_payouts_enabled: false },
+      })
+    })
+
+    // supabase-js resolves with `{ data, error }`, so the old try/catch never
+    // fired and this failure was invisible.
+    it('fails loudly and releases the claim when the write errors', async () => {
+      const { admin } = dispatchAdmin({ updateError: { message: 'permission denied' } })
+
+      await expect(processStripeEvent(admin, eventBase('account.updated', { id: 'acct_1' })))
+        .rejects.toMatchObject({ name: 'StripeWebhookError', code: 'handler_failed' })
+
+      expect(releaseStripeEvent).toHaveBeenCalledWith(admin, 'evt_123')
+    })
+  })
+
+  describe('refunds', () => {
+    it('marks a fully refunded participant', async () => {
+      const { admin, updates } = dispatchAdmin()
+
+      const res = await processStripeEvent(admin, eventBase('charge.refunded', chargeBase()))
+
+      expect(res).toMatchObject({ received: true, refunded: true })
+      expect(updates[0]).toMatchObject({
+        table: 'participants',
+        column: 'stripe_payment_intent_id',
+        value: 'pi_123',
+      })
+      expect(updates[0]!.values.payment_status).toBe('refunded')
+      expect(updates[0]!.values.amount_refunded_cents).toBe(1000)
+      expect(updates[0]!.values.refunded_at).toEqual(expect.any(String))
+      expect(updates[0]!.values.stripe_refund_id).toBe('re_1')
+    })
+
+    it('marks a partial refund without stamping refunded_at', async () => {
+      const { admin, updates } = dispatchAdmin()
+
+      await processStripeEvent(admin, eventBase('charge.refunded', chargeBase({ amount_refunded: 400 })))
+
+      expect(updates[0]!.values.payment_status).toBe('partial_refund')
+      expect(updates[0]!.values.refunded_at).toBeNull()
+    })
+
+    it('falls back to paid when nothing was refunded', async () => {
+      const { admin, updates } = dispatchAdmin()
+
+      await processStripeEvent(admin, eventBase('charge.refunded', chargeBase({ amount_refunded: 0, refunds: { data: [] } })))
+
+      expect(updates[0]!.values.payment_status).toBe('paid')
+    })
+
+    it('reprocessing the same charge writes identical values', async () => {
+      const charge = chargeBase({ amount_refunded: 400 })
+      const first = dispatchAdmin()
+      const second = dispatchAdmin()
+
+      await processStripeEvent(first.admin, eventBase('charge.refunded', charge))
+      await processStripeEvent(second.admin, eventBase('charge.refunded', charge))
+
+      // Absolute values from the charge, never increments — which is what makes
+      // answering 5xx and letting Stripe redeliver safe.
+      expect(second.updates[0]!.values.amount_refunded_cents)
+        .toBe(first.updates[0]!.values.amount_refunded_cents)
+      expect(second.updates[0]!.values.payment_status)
+        .toBe(first.updates[0]!.values.payment_status)
+    })
+
+    it('releases the claim for a charge that is not ours', async () => {
+      const { admin, updates } = dispatchAdmin()
+
+      const res = await processStripeEvent(
+        admin,
+        eventBase('charge.refunded', chargeBase({ payment_intent: null })),
+      )
+
+      expect(res).toEqual({ received: true, ignored: 'no_payment_intent' })
+      expect(releaseStripeEvent).toHaveBeenCalledWith(admin, 'evt_123')
+      expect(updates).toHaveLength(0)
+    })
+
+    it('accepts an expanded payment_intent object', async () => {
+      const { admin, updates } = dispatchAdmin()
+
+      await processStripeEvent(
+        admin,
+        eventBase('charge.refunded', chargeBase({ payment_intent: { id: 'pi_expanded' } })),
+      )
+
+      expect(updates[0]!.value).toBe('pi_expanded')
+    })
+
+    // The behaviour change that matters: 200 used to tell Stripe the refund was
+    // recorded when it was not, leaving the participant `paid` after a refund.
+    it('answers 5xx and releases the claim when the write errors', async () => {
+      const { admin } = dispatchAdmin({ updateError: { message: 'deadlock detected' } })
+
+      await expect(processStripeEvent(admin, eventBase('charge.refunded', chargeBase())))
+        .rejects.toMatchObject({ name: 'StripeWebhookError', code: 'handler_failed' })
+
+      expect(releaseStripeEvent).toHaveBeenCalledWith(admin, 'evt_123')
+    })
+  })
+
+  describe('ledger failures', () => {
+    it('an unreadable ledger is not mistaken for an empty one', async () => {
+      vi.mocked(wasStripeEventProcessed).mockRejectedValue(new Error('relation does not exist'))
+      const { admin } = dispatchAdmin()
+
+      await expect(processStripeEvent(admin, eventBase('charge.refunded', chargeBase())))
+        .rejects.toMatchObject({ code: 'idempotency_lookup_failed' })
+
+      expect(claimStripeEvent).not.toHaveBeenCalled()
+    })
+
+    it('a claim that cannot be written stops the dispatch', async () => {
+      vi.mocked(claimStripeEvent).mockRejectedValue(new Error('insert failed'))
+      const { admin, updates } = dispatchAdmin()
+
+      await expect(processStripeEvent(admin, eventBase('account.updated', { id: 'acct_1' })))
+        .rejects.toMatchObject({ code: 'idempotency_lock_failed' })
+
+      expect(updates).toHaveLength(0)
+    })
+  })
+
+  it('still routes a checkout session to its handler', async () => {
+    const { admin } = dispatchAdmin()
+    const session = sessionBase('paid', { organization_id: 'org-1', plan: 'starter' })
+
+    const res = await processStripeEvent(admin, eventBase('checkout.session.completed', session))
+
+    expect(res).toMatchObject({ received: true, credited: true })
+    expect(admin.rpc).toHaveBeenCalledWith('credit_bundle', expect.objectContaining({
+      p_org_id: 'org-1',
+      p_plan: 'starter',
+      p_stripe_event_id: 'evt_123',
+    }))
   })
 })
