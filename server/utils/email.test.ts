@@ -54,6 +54,31 @@ describe('sendWelcomeEmail', () => {
     }))
   })
 
+  // The real failure mode: the SDK resolves with { data, error } and only
+  // rejects on transport errors, so an unverified sender domain never reaches
+  // the catch above. This used to be logged as 'sent' with a null id.
+  it('treats a resolved Resend error as a failure, not a send', async () => {
+    sendMock.mockResolvedValueOnce({
+      data: null,
+      error: {
+        name: 'validation_error',
+        message: 'The contestmanager.app domain is not verified',
+        statusCode: 403,
+      },
+    })
+
+    const res = await sendWelcomeEmail({ to: 'user@example.com', first_name: null, email: 'user@example.com' })
+
+    expect(res.sent).toBe(false)
+    expect(res.id).toBeNull()
+    expect(res.error).toContain('not verified')
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'failed',
+      error: 'validation_error: The contestmanager.app domain is not verified',
+    }))
+    expect(updateMock).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'sent' }))
+  })
+
 
 })
 
