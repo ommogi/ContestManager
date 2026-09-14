@@ -195,18 +195,47 @@ function uploadErrorFor(fieldId: string): string | undefined {
   return uploadErrors.value[fieldId]
 }
 
+/** A snake_case token such as `file_too_large` is a code, not a sentence. */
+function isErrorCode(value: string): boolean {
+  return /^[a-z0-9]+(_[a-z0-9]+)+$/.test(value)
+}
+
+/**
+ * The participant-facing sentence the server sent, if it sent one.
+ *
+ * The upload endpoint puts it in `message` — an HTTP status line cannot carry
+ * the accents — but the exact envelope Nitro serialises has changed between
+ * versions, so `data.message` and a non-code `statusMessage` are accepted too.
+ * A code is never shown: it is not Spanish and means nothing to a participant.
+ */
+function readableServerMessage(body: unknown): string {
+  if (typeof body !== 'object' || body === null) return ''
+  const envelope = body as Record<string, unknown>
+  const nested = envelope.data as Record<string, unknown> | undefined
+
+  const candidates = [
+    envelope.message,
+    typeof nested === 'object' && nested !== null ? nested.message : undefined,
+    envelope.statusMessage,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue
+    const text = candidate.trim()
+    if (text && !isErrorCode(text)) return text
+  }
+  return ''
+}
+
 /**
  * Turn a failed upload into something a participant can act on.
  *
- * 400/409/413 carry a curated Spanish `message` from the server and are shown
+ * 400/409/413 carry a curated Spanish message from the server and are shown
  * verbatim. Anything else gets a generic line: a 500's `statusMessage` is an
  * internal code (`upload_ledger_failed`) and must not reach the page.
  */
 function uploadErrorMessage(status: number, body: unknown): string {
-  const serverMessage =
-    typeof body === 'object' && body !== null && typeof (body as { message?: unknown }).message === 'string'
-      ? (body as { message: string }).message.trim()
-      : ''
+  const serverMessage = readableServerMessage(body)
 
   if ((status === 400 || status === 409 || status === 413) && serverMessage) {
     return serverMessage
