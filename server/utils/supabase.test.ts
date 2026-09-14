@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { H3Event } from 'h3'
 
-// Mock createClient so serverSupabaseAdmin never fails on missing env vars
+// Mock createClient so no test ever opens a real connection.
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => ({
     from: vi.fn(),
     rpc: vi.fn(),
   })),
 }))
+
+// Since KAN-55, serverSupabaseAdmin() throws when its env vars are missing
+// instead of silently building a client with ''. Every suite below reaches it
+// through requireOrgOwner/requireOrgOwnerOrMember, so give it valid-looking
+// values. The dedicated guard suite at the bottom removes them on purpose.
+process.env.SUPABASE_URL = 'https://test.supabase.co'
+process.env.SUPABASE_SERVICE_KEY = 'test-service-key'
 
 function mockEvent(user?: any): H3Event {
   return { context: { user } } as unknown as H3Event
@@ -334,5 +341,76 @@ describe('requireOrgOwner error handling', () => {
     const requireOrgOwner = await withAdmin({ data: null, error: null })
 
     await expect(requireOrgOwner(requestEvent(undefined))).rejects.toMatchObject({ statusCode: 401 })
+  })
+})
+
+describe('serverSupabaseAdmin env guard (KAN-55)', () => {
+  const ORIGINAL_URL = process.env.SUPABASE_URL
+  const ORIGINAL_KEY = process.env.SUPABASE_SERVICE_KEY
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    process.env.SUPABASE_URL = ORIGINAL_URL
+    process.env.SUPABASE_SERVICE_KEY = ORIGINAL_KEY
+  })
+
+  async function loadAdmin() {
+    const { serverSupabaseAdmin } = await import('./supabase')
+    return serverSupabaseAdmin
+  }
+
+  it('throws naming SUPABASE_SERVICE_KEY when the service key is missing', async () => {
+    process.env.SUPABASE_URL = 'https://test.supabase.co'
+    delete process.env.SUPABASE_SERVICE_KEY
+    const serverSupabaseAdmin = await loadAdmin()
+
+    expect(() => serverSupabaseAdmin()).toThrow(/SUPABASE_SERVICE_KEY/)
+  })
+
+  it('throws naming SUPABASE_SERVICE_KEY when the service key is blank', async () => {
+    process.env.SUPABASE_URL = 'https://test.supabase.co'
+    process.env.SUPABASE_SERVICE_KEY = '   '
+    const serverSupabaseAdmin = await loadAdmin()
+
+    expect(() => serverSupabaseAdmin()).toThrow(/SUPABASE_SERVICE_KEY/)
+  })
+
+  it('throws naming SUPABASE_URL when the url is missing', async () => {
+    delete process.env.SUPABASE_URL
+    process.env.SUPABASE_SERVICE_KEY = 'test-service-key'
+    const serverSupabaseAdmin = await loadAdmin()
+
+    expect(() => serverSupabaseAdmin()).toThrow(/SUPABASE_URL/)
+  })
+
+  it('never builds a client when a variable is missing', async () => {
+    delete process.env.SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_KEY
+    const { createClient } = await import('@supabase/supabase-js')
+    const serverSupabaseAdmin = await loadAdmin()
+
+    expect(() => serverSupabaseAdmin()).toThrow()
+    expect(createClient).not.toHaveBeenCalled()
+  })
+
+  it('builds and memoizes the client when both variables are set', async () => {
+    process.env.SUPABASE_URL = 'https://test.supabase.co'
+    process.env.SUPABASE_SERVICE_KEY = 'test-service-key'
+    const { createClient } = await import('@supabase/supabase-js')
+    const serverSupabaseAdmin = await loadAdmin()
+
+    const first = serverSupabaseAdmin()
+    const second = serverSupabaseAdmin()
+    expect(first).toBe(second)
+    expect(createClient).toHaveBeenCalledTimes(1)
+    expect(createClient).toHaveBeenCalledWith(
+      'https://test.supabase.co',
+      'test-service-key',
+      expect.anything(),
+    )
   })
 })
