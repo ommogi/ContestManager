@@ -3,7 +3,9 @@
 -- successful checkout sessions whose metadata.type = 'activations'.
 
 -- Allow 'purchase_activations' as billing reason
-ALTER TABLE public.billing_transactions DROP CONSTRAINT billing_transactions_reason_check;
+-- IF EXISTS added in KAN-61: without it a re-run aborts the whole file, and
+-- this migration still has to be applied to production.
+ALTER TABLE public.billing_transactions DROP CONSTRAINT IF EXISTS billing_transactions_reason_check;
 ALTER TABLE public.billing_transactions ADD CONSTRAINT billing_transactions_reason_check
   CHECK (reason = ANY (ARRAY[
     'purchase_bundle',
