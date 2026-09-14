@@ -7,18 +7,38 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ArrowUpDown, ArrowUp, ArrowDown, Trash2, Mail } from 'lucide-vue-next'
 
-type InvitationStatus = 'pending' | 'accepted' | 'rejected' | null | undefined
+type InvitationStatus = 'pending' | 'accepted' | 'rejected' | 'expired' | null | undefined
 
 const STATUS_LABEL: Record<string, string> = {
   pending: 'Pendiente',
   accepted: 'Aceptado',
   rejected: 'Rechazado',
+  expired: 'Caducada',
+}
+
+/**
+ * `expired` is not a value the database stores: the row stays `pending` and the
+ * server answers 410 when its window has closed (KAN-40). Deriving it here is
+ * what tells an organizer that resending is now the only way forward, rather
+ * than leaving a link that looks live and is not.
+ */
+function effectiveStatus(row: { invitation_status?: string | null; invitation_expires_at?: string | null }): string | null {
+  const status = row.invitation_status ?? null
+  if (status !== 'pending') return status
+  const expiresAt = row.invitation_expires_at
+  if (!expiresAt) return status
+  const deadline = Date.parse(expiresAt)
+  if (Number.isNaN(deadline)) return status
+  return Date.now() > deadline ? 'expired' : status
 }
 
 const STATUS_CLASS: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-900/60',
   accepted: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-900/60',
   rejected: 'bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800',
+  // Red rather than amber: an expired invitation needs an action, a pending one
+  // only needs waiting, and they must not look alike at a glance.
+  expired: 'bg-red-100 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-200 dark:border-red-900/60',
 }
 
 export const createColumns = (
@@ -74,7 +94,7 @@ export const createColumns = (
     accessorKey: 'invitation_status',
     header: () => h('span', { class: 'font-bold text-xs uppercase tracking-wider text-zinc-500 dark:text-zinc-400' }, 'Estado'),
     cell: ({ row }) => {
-      const status = (row.original as any).invitation_status as InvitationStatus
+      const status = effectiveStatus(row.original as any)
       if (!status) return h('span', { class: 'text-xs text-muted-foreground' }, '—')
       const label = STATUS_LABEL[status] || status
       const cls = STATUS_CLASS[status] || ''
@@ -86,8 +106,10 @@ export const createColumns = (
     id: 'actions',
     header: '',
     cell: ({ row }) => {
-      const status = (row.original as any).invitation_status as InvitationStatus
-      const isPending = status === 'pending'
+      // Resend stays offered while the row is pending, expired or not: rotating
+      // the token is precisely how an expired invitation is recovered.
+      const status = effectiveStatus(row.original as any)
+      const isPending = status === 'pending' || status === 'expired'
       const children: any[] = []
       if (isPending && onResend) {
         children.push(h(Button, {

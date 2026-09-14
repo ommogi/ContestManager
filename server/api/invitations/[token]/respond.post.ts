@@ -2,6 +2,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { z } from 'zod'
 import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { insertNotifications } from '~~/server/utils/notifications'
+import { assertInvitationNotExpired } from '~~/server/utils/invitation-expiry'
 
 const RespondSchema = z.object({
   action: z.enum(['accept', 'reject']),
@@ -23,7 +24,7 @@ export default defineEventHandler(async (event) => {
 
   const { data: member, error: memberErr } = await admin
     .from('contest_members')
-    .select('id, contest_id, email, user_id, invitation_status, full_name, role')
+    .select('id, contest_id, email, user_id, invitation_status, invitation_expires_at, full_name, role')
     .eq('invitation_token', token)
     .maybeSingle()
 
@@ -32,6 +33,10 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 500, statusMessage: 'internal_error' })
   }
   if (!member) throw createError({ statusCode: 404, statusMessage: 'Invitation not found' })
+
+  // 410, distinguishable from the 404 above and the 409 below, so the UI can
+  // offer a resend instead of telling someone to check the link (KAN-40).
+  assertInvitationNotExpired(member.invitation_expires_at as string | null)
 
   if (member.invitation_status !== 'pending') {
     throw createError({ statusCode: 409, statusMessage: `Invitation already ${member.invitation_status}` })

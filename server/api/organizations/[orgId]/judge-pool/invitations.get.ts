@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
 
   const { data, error } = await client
     .from('judge_pool_invitations')
-    .select('id, email, full_name, specialty, invitation_status, invited_at, responded_at')
+    .select('id, email, full_name, specialty, invitation_status, invitation_expires_at, invited_at, responded_at')
     .eq('organization_id', orgId)
     .order('invited_at', { ascending: false })
 
