@@ -32,10 +32,11 @@ import type {
 } from '../../shared/inscription-form'
 import {
   FormSchemaLookupError,
-  loadPublishedFormSchema,
+  loadPublishedFormSchemaForContest,
   type FormSchemaRpcClient,
 } from './inscription-form-schema'
 import { assertValidFormResponses } from './validate-form-responses'
+import { parseUploadPath } from './inscription-uploads'
 
 /** Same shape `serverSupabaseAdmin()` returns; also what the webhook passes. */
 export type FormResponsesAdmin = ReturnType<typeof createClient>
@@ -53,6 +54,13 @@ export const MAX_RESPONSES_BYTES = 256 * 1024
 
 /** Validated answers, ready to store, paired with the schema they belong to. */
 export interface FormSubmission {
+  /**
+   * The contest the token resolved to. Carried on the submission because
+   * `confirm_inscription_uploads` is scoped by contest, and re-resolving the
+   * token at the point of use would be a second round-trip that could disagree
+   * with the first.
+   */
+  contestId: string
   formSchemaId: string
   responses: FormResponses
 }
@@ -146,9 +154,12 @@ export async function prepareFormSubmission(
   token: string,
   body: RawFormSubmissionBody,
 ): Promise<FormSubmission | null> {
+  let contestId: string
   let published
   try {
-    published = await loadPublishedFormSchema(client, token)
+    const resolved = await loadPublishedFormSchemaForContest(client, token)
+    contestId = resolved.contestId
+    published = resolved.schema
   } catch (err) {
     if (err instanceof FormSchemaLookupError && err.reason === 'contest_not_found') {
       throw createError({ statusCode: 404, statusMessage: 'Concurso no encontrado.' })
@@ -186,7 +197,110 @@ export async function prepareFormSubmission(
   // ids the schema declares — so nothing unvalidated reaches the database.
   const responses = assertValidFormResponses(answerable, submitted)
 
-  return { formSchemaId: published.id, responses }
+  return { contestId, formSchemaId: published.id, responses }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Uploaded files (KAN-49)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every object key referenced by a `file` answer, deduplicated.
+ *
+ * Read from the VALIDATED submission, never the raw body: by this point
+ * `assertValidFormResponses` has already narrowed the bag to the ids the
+ * schema declares, so a key invented by the client cannot smuggle a path in.
+ */
+export function collectUploadPaths(responses: FormResponses): string[] {
+  const paths = new Set<string>()
+  for (const value of Object.values(responses)) {
+    if (!Array.isArray(value)) continue
+    for (const item of value) {
+      if (isFileReference(item) && item.path.length > 0) paths.add(item.path)
+    }
+  }
+  return [...paths]
+}
+
+/**
+ * Reject file references that do not belong to this user and this contest.
+ *
+ * The object key is `{contest_id}/{user_id}/{field_id}/{uuid}-{name}` and
+ * `buildUploadPath` is its only writer, so the first two segments are an
+ * ownership claim the server can check for free.
+ *
+ * Defence in depth, deliberately, not the only barrier — be clear about what
+ * this does and does not add:
+ *
+ *  · `validateFileField` only COUNTS file references, so nothing upstream
+ *    stops a crafted request from putting somebody else's object key into its
+ *    own `responses_json`. This is what stops that reference being stored.
+ *  · Such a key could never be read anyway: `form-file.get.ts` looks the
+ *    ledger row up by `participant_id` AND `path` together, so a forged
+ *    reference resolves to no row and answers 404.
+ *  · Nor could it be attached: `confirm_inscription_uploads` filters on
+ *    `contest_id` and `user_id`, so it can neither confirm nor purge another
+ *    user's object.
+ *
+ * What is prevented is therefore a poisoned `responses_json` — an organizer
+ * shown a file name that can never be downloaded — and the next endpoint that
+ * signs by path without re-checking the ledger. Loud 400 rather than a silent
+ * strip: a path that fails this check is either forged or a bug, and neither
+ * should be swallowed.
+ */
+export function assertOwnedUploadPaths(
+  paths: string[],
+  owner: { contestId: string; userId: string },
+): void {
+  for (const path of paths) {
+    const parts = parseUploadPath(path)
+    if (!parts || parts.contestId !== owner.contestId || parts.ownerId !== owner.userId) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'invalid_file_reference',
+        message: 'Uno de los archivos adjuntos no es válido. Vuelve a subirlo.',
+      })
+    }
+  }
+}
+
+/**
+ * Attach this user's pending uploads to the participant that now exists, and
+ * mark everything they uploaded and did NOT reference as purgeable.
+ *
+ * Both halves live in `confirm_inscription_uploads` (migration 0054), which is
+ * `SECURITY DEFINER` and takes the user id as a parameter precisely because
+ * the paid path completes inside the Stripe webhook, where there is no
+ * session. It filters on `contest_id` + `user_id` + `confirmed_at IS NULL`, so
+ * it can neither confirm nor purge another user's object, and re-running it is
+ * a no-op for rows it has already confirmed — which is what makes a Stripe
+ * redelivery safe.
+ *
+ * Calling it with an EMPTY path list is meaningful and intended: it means the
+ * participant attached files, then removed them all, and the second UPDATE
+ * purges them instead of leaving them pending for the 24-hour TTL.
+ *
+ * Throws on failure. What that means is the caller's decision — see the
+ * comments at the two call sites.
+ */
+export async function confirmInscriptionUploads(
+  admin: FormResponsesAdmin,
+  params: { contestId: string; userId: string; participantId: string; paths: string[] },
+): Promise<number> {
+  const { data, error } = await admin.rpc('confirm_inscription_uploads', {
+    p_contest_id: params.contestId,
+    p_user_id: params.userId,
+    p_participant_id: params.participantId,
+    p_paths: params.paths,
+  })
+
+  // supabase-js resolves with `{ data, error }` and never rejects, so a
+  // try/catch around this call would never run. Check `error` explicitly.
+  if (error) {
+    throw new Error(`confirm_inscription_uploads: ${error.message}`)
+  }
+
+  return typeof data === 'number' ? data : 0
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +410,10 @@ export async function readPendingFormResponses(
 ): Promise<FormSubmission | null> {
   const { data, error } = await admin
     .from('pending_form_responses')
-    .select('form_schema_id, responses_json')
+    // `contest_id` comes from the draft row rather than from the Stripe
+    // metadata: the row is what the answers — and the file paths inside them —
+    // were validated against, and it cannot be edited from outside the server.
+    .select('contest_id, form_schema_id, responses_json')
     .eq('id', draftId)
     .maybeSingle()
 
@@ -305,8 +422,9 @@ export async function readPendingFormResponses(
   }
   if (!data) return null
 
-  const row = data as { form_schema_id?: unknown; responses_json?: unknown }
+  const row = data as { contest_id?: unknown; form_schema_id?: unknown; responses_json?: unknown }
   if (typeof row.form_schema_id !== 'string') return null
+  if (typeof row.contest_id !== 'string') return null
 
   const raw = row.responses_json
   const responses =
@@ -314,7 +432,7 @@ export async function readPendingFormResponses(
       ? coerceFormResponses(raw as Record<string, unknown>)
       : {}
 
-  return { formSchemaId: row.form_schema_id, responses }
+  return { contestId: row.contest_id, formSchemaId: row.form_schema_id, responses }
 }
 
 /**

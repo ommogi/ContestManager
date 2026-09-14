@@ -6,8 +6,10 @@ import {
   resolveResponses,
   buildParticipantResponses,
   loadFormResponsesForParticipants,
-  loadContestParticipantIds,
+  loadContestParticipants,
+  toParticipantCoreRow,
   FormResponsesQueryError,
+  PARTICIPANT_CORE_COLUMNS,
   type FormResponsesClient,
   type FormResponseRow,
   type FormSchemaRow,
@@ -365,12 +367,20 @@ describe('loadFormResponsesForParticipants', () => {
   })
 })
 
-describe('loadContestParticipantIds', () => {
-  it('returns the ids of the contest participants', async () => {
+describe('loadContestParticipants', () => {
+  it('returns the contest participants with their core columns', async () => {
     const { client, calls } = stubClient({
-      participants: { data: [{ id: 'p1' }, { id: 'p2' }], error: null },
+      participants: {
+        data: [
+          { id: 'p1', first_name: 'Ada', last_name: 'Lovelace', birthdate: '1990-01-01' },
+          { id: 'p2', first_name: 'Alan', last_name: 'Turing', birthdate: '1991-02-02' },
+        ],
+        error: null,
+      },
     })
-    expect(await loadContestParticipantIds(client, 'c1')).toEqual(['p1', 'p2'])
+    const rows = await loadContestParticipants(client, 'c1')
+    expect(rows.map(r => r.id)).toEqual(['p1', 'p2'])
+    expect(rows[0]).toMatchObject({ first_name: 'Ada', last_name: 'Lovelace' })
     expect(calls).toEqual(['participants'])
   })
 
@@ -378,6 +388,195 @@ describe('loadContestParticipantIds', () => {
     const { client } = stubClient({
       participants: { data: null, error: { message: 'boom' } },
     })
-    await expect(loadContestParticipantIds(client, 'c1')).rejects.toBeInstanceOf(FormResponsesQueryError)
+    await expect(loadContestParticipants(client, 'c1')).rejects.toBeInstanceOf(FormResponsesQueryError)
+  })
+})
+
+// ─── Core fields come from the participant row, not from responses_json ──────
+//
+// The regression this covers (KAN-58): since KAN-56 the schema DECLARES core
+// entries, but `prepareFormSubmission` strips them from the validated bag, so
+// `responses_json` never holds them. Resolving them against `responses` alone
+// made the organizer's viewer show name, surname and birthdate blank.
+
+function coreField(id: string, label: string, type: FormField['type'], order: number): FormField {
+  return field({ id, label, type, order, isCore: true, required: true } as Parameters<typeof field>[0])
+}
+
+const schemaWithCore: FormSchemaRow = {
+  id: 'schema-core',
+  version: 3,
+  schema_json: [
+    coreField('core.first_name', 'Nombre', 'text', 0),
+    coreField('core.last_name', 'Apellidos', 'text', 1),
+    coreField('core.birthdate', 'Fecha de nacimiento', 'date', 2),
+    coreField('core.dni', 'DNI / NIE / Pasaporte', 'text', 3),
+    coreField('core.country', 'País', 'text', 4),
+    coreField('core.phone', 'Teléfono', 'phone', 5),
+    coreField('core.email', 'Email', 'email', 6),
+    field({ id: 'voice', type: 'select', label: 'Cuerda', order: 7, options: [
+      { value: 'soprano', label: 'Soprano' },
+    ] }),
+  ],
+}
+
+// Exactly what the server stores: the organization's own questions only.
+const coreRows: FormResponseRow[] = [{
+  participant_id: 'p-core',
+  form_schema_id: 'schema-core',
+  responses_json: { voice: 'soprano' },
+  created_at: '2026-05-01T10:00:00Z',
+}]
+
+const adaRow = {
+  id: 'p-core',
+  first_name: 'Ada',
+  last_name: 'Lovelace',
+  birthdate: '1990-04-11',
+  dni: '12345678Z',
+  country: 'ES',
+  phone: '+34600112233',
+  email: 'ada@example.com',
+}
+
+describe('core fields in the organizer viewer', () => {
+  it('fills every core entry from the participant columns', () => {
+    const [only] = buildParticipantResponses([adaRow], coreRows, [schemaWithCore])
+    const byId = Object.fromEntries(only!.fields.map(f => [f.id, f]))
+
+    expect(byId['core.first_name']).toMatchObject({ label: 'Nombre', value: 'Ada', displayValue: 'Ada' })
+    expect(byId['core.last_name']).toMatchObject({ value: 'Lovelace', displayValue: 'Lovelace' })
+    expect(byId['core.birthdate']).toMatchObject({ value: '1990-04-11', displayValue: '1990-04-11' })
+    expect(byId['core.dni']).toMatchObject({ value: '12345678Z' })
+    expect(byId['core.country']).toMatchObject({ value: 'ES' })
+    expect(byId['core.phone']).toMatchObject({ value: '+34600112233' })
+    expect(byId['core.email']).toMatchObject({ value: 'ada@example.com' })
+  })
+
+  it('is the regression: without the participant row the core entries stay blank', () => {
+    // Precisely what the endpoint returned before this fix.
+    const [only] = buildParticipantResponses(['p-core'], coreRows, [schemaWithCore])
+    expect(only!.fields.find(f => f.id === 'core.first_name'))
+      .toMatchObject({ value: null, displayValue: '' })
+  })
+
+  it('still resolves the organization own questions from responses_json', () => {
+    const [only] = buildParticipantResponses([adaRow], coreRows, [schemaWithCore])
+    expect(only!.fields.find(f => f.id === 'voice'))
+      .toMatchObject({ value: 'soprano', displayValue: 'Soprano' })
+  })
+
+  it('keeps the schema order, core and custom interleaved as published', () => {
+    const [only] = buildParticipantResponses([adaRow], coreRows, [schemaWithCore])
+    expect(only!.fields.map(f => f.id)).toEqual([
+      'core.first_name', 'core.last_name', 'core.birthdate', 'core.dni',
+      'core.country', 'core.phone', 'core.email', 'voice',
+    ])
+  })
+
+  it('leaves an optional core column empty rather than inventing a value', () => {
+    const [only] = buildParticipantResponses([{ ...adaRow, phone: null }], coreRows, [schemaWithCore])
+    expect(only!.fields.find(f => f.id === 'core.phone'))
+      .toMatchObject({ value: null, displayValue: '' })
+  })
+
+  it('falls back to responses_json for a core id an older client wrote there', () => {
+    // Belt and braces: core values should never be in the bag, but if a legacy
+    // row has one and the column is empty, showing it beats losing it.
+    const legacy: FormResponseRow[] = [{
+      participant_id: 'p-core',
+      form_schema_id: 'schema-core',
+      responses_json: { voice: 'soprano', 'core.phone': '+34911223344' },
+      created_at: '2026-05-01T10:00:00Z',
+    }]
+    const [only] = buildParticipantResponses([{ ...adaRow, phone: null }], legacy, [schemaWithCore])
+    expect(only!.fields.find(f => f.id === 'core.phone')!.value).toBe('+34911223344')
+  })
+
+  it('prefers the typed column over a stale copy in responses_json', () => {
+    const conflicting: FormResponseRow[] = [{
+      participant_id: 'p-core',
+      form_schema_id: 'schema-core',
+      responses_json: { 'core.first_name': 'Nombre viejo' },
+      created_at: '2026-05-01T10:00:00Z',
+    }]
+    const [only] = buildParticipantResponses([adaRow], conflicting, [schemaWithCore])
+    expect(only!.fields.find(f => f.id === 'core.first_name')!.value).toBe('Ada')
+  })
+
+  it('keeps a participant with no response row on an empty list even with core data', () => {
+    expect(buildParticipantResponses([adaRow], [], [schemaWithCore])[0]).toEqual({
+      participantId: 'p-core',
+      formSchemaId: null,
+      schemaVersion: null,
+      submittedAt: null,
+      fields: [],
+    })
+  })
+
+  it('resolves each participant against their own schema version AND their own columns', () => {
+    const mixed: FormResponseRow[] = [
+      ...coreRows,
+      { participant_id: 'p-old', form_schema_id: 'schema-v1', responses_json: { voice: 'tenor' }, created_at: '2026-01-01T00:00:00Z' },
+    ]
+    const [ada, older] = buildParticipantResponses(
+      [adaRow, { id: 'p-old', first_name: 'Alan' }],
+      mixed,
+      [schemaWithCore, schemaV1],
+    )
+    expect(ada!.schemaVersion).toBe(3)
+    expect(ada!.fields.find(f => f.id === 'core.first_name')!.value).toBe('Ada')
+    // schema-v1 declares no core entries at all, so nothing core surfaces.
+    expect(older!.schemaVersion).toBe(1)
+    expect(older!.fields.map(f => f.id)).toEqual(['voice', 'piece'])
+  })
+})
+
+describe('PARTICIPANT_CORE_COLUMNS / toParticipantCoreRow', () => {
+  it('names id plus every column the core catalogue writes to', () => {
+    expect(PARTICIPANT_CORE_COLUMNS).toBe(
+      'id, first_name, last_name, birthdate, dni, country, phone, email',
+    )
+  })
+
+  it('narrows an untyped row and drops nulls', () => {
+    expect(toParticipantCoreRow({ id: 'p1', first_name: 'Ada', phone: null, junk: 1 }))
+      .toEqual({ id: 'p1', first_name: 'Ada' })
+  })
+
+  it('stringifies a non-string column rather than leaking the driver type', () => {
+    expect(toParticipantCoreRow({ id: 'p1', birthdate: new Date('1990-04-11T00:00:00Z') }).birthdate)
+      .toContain('1990')
+  })
+})
+
+describe('loadFormResponsesForParticipants with core rows', () => {
+  it('still issues two queries for 500 participants carrying core columns', async () => {
+    const rows = Array.from({ length: 500 }, (_, i) => ({
+      id: `p-${i}`,
+      first_name: `Nombre ${i}`,
+      last_name: 'Apellido',
+      birthdate: '1990-01-01',
+    }))
+    const responseRows = rows.map(r => ({
+      participant_id: r.id,
+      form_schema_id: 'schema-core',
+      responses_json: { voice: 'soprano' },
+      created_at: '2026-01-01T00:00:00Z',
+    }))
+
+    const { client, calls } = stubClient({
+      participant_form_responses: { data: responseRows, error: null },
+      inscription_form_schemas: { data: [schemaWithCore], error: null },
+    })
+
+    const result = await loadFormResponsesForParticipants(client, rows)
+
+    // Two here plus the caller's one participants query = three for the whole
+    // viewer, for 500 inscriptions as for one.
+    expect(calls).toEqual(['participant_form_responses', 'inscription_form_schemas'])
+    expect(result).toHaveLength(500)
+    expect(result[0]!.fields.find(f => f.id === 'core.first_name')!.value).toBe('Nombre 0')
+    expect(result[499]!.fields.find(f => f.id === 'core.first_name')!.value).toBe('Nombre 499')
   })
 })

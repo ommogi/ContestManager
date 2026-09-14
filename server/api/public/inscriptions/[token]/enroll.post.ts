@@ -3,6 +3,9 @@ import { serverSupabaseUser, serverSupabaseAdmin, requireAuth, internalError } f
 import { sendEnrollmentEmail } from '~~/server/utils/email'
 import { EnrollBodySchema } from '~~/server/utils/schemas'
 import {
+  assertOwnedUploadPaths,
+  collectUploadPaths,
+  confirmInscriptionUploads,
   persistParticipantFormResponses,
   prepareFormSubmission,
 } from '~~/server/utils/inscription-form-responses'
@@ -48,6 +51,14 @@ export default defineEventHandler(async (event) => {
   // key cannot skip a required field. Returns null when the contest has no
   // published form, which leaves the rest of this handler untouched.
   const submission = await prepareFormSubmission(admin, token, parsed.data)
+
+  // Object keys are `{contest_id}/{user_id}/…`, so a reference to somebody
+  // else's upload is detectable before anything is created. Runs here rather
+  // than after the RPC so a forged path leaves no participant behind (KAN-49).
+  const uploadPaths = submission ? collectUploadPaths(submission.responses) : []
+  if (submission) {
+    assertOwnedUploadPaths(uploadPaths, { contestId: submission.contestId, userId: user.id })
+  }
 
   const { data, error } = await client.rpc('enroll_participant', {
     p_token: token,
@@ -96,6 +107,49 @@ export default defineEventHandler(async (event) => {
         statusCode: 500,
         statusMessage: 'Te has inscrito, pero no hemos podido guardar las respuestas del formulario. Contacta con la organización.',
       })
+    }
+
+    // ── Confirm the uploaded files (KAN-49) ──────────────────────────────────
+    //
+    // Until this runs, every file the participant uploaded is still `pending`
+    // in `inscription_uploads` and `sweep_orphan_inscription_uploads` will mark
+    // it purgeable 24 hours later — so the answers just stored would be left
+    // pointing at deleted objects. The same call purges what the participant
+    // picked and then discarded, which is why it is made even when the form
+    // referenced no file at all (an empty `p_paths` means "keep nothing").
+    //
+    // Ordering: after the answers, not before. If this step fails the answers
+    // are already safe and the file references in them can be recovered from
+    // the ledger; the reverse order would confirm files for an inscription
+    // whose answers were never stored.
+    //
+    // Failure policy on THIS path — no money is involved, so there is no Stripe
+    // retry to lean on:
+    //   · files were referenced → the inscription would silently lose them in
+    //     24 hours, so fail loudly and tell the participant to contact the
+    //     organization. Same shape as the answer-write failure above.
+    //   · nothing was referenced → the only thing missed is the early purge of
+    //     discarded uploads, which the orphan sweep does anyway. Log it and let
+    //     the inscription succeed; a 500 here would be a lie.
+    try {
+      await confirmInscriptionUploads(admin, {
+        contestId: submission.contestId,
+        userId: user.id,
+        participantId,
+        paths: uploadPaths,
+      })
+    } catch (e) {
+      console.error(
+        `[enroll] uploads not confirmed for participant ${participantId} ` +
+        `(contest ${submission.contestId}, ${uploadPaths.length} file(s)):`,
+        (e as Error)?.message,
+      )
+      if (uploadPaths.length > 0) {
+        throw createError({
+          statusCode: 500,
+          statusMessage: 'Te has inscrito, pero no hemos podido guardar los archivos adjuntos. Contacta con la organización.',
+        })
+      }
     }
   }
 
