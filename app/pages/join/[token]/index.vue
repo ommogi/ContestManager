@@ -27,7 +27,7 @@ import {
   isCoreFieldId,
   resolvePublishedFields,
 } from '../../../../shared/inscription-form-core'
-import type { FormField, FormResponses, PublishedFormSchema } from '~/types/inscription-form'
+import type { FormField, FormFileReference, FormResponses, PublishedFormSchema } from '~/types/inscription-form'
 
 definePageMeta({
   layout: 'auth',
@@ -309,6 +309,8 @@ const missingRequiredCore = computed<FormField[]>(() =>
 // `FormFileReference` the server returns. Submit is held while bytes fly.
 
 const uploadUrl = computed(() => `/api/public/inscriptions/${token.value}/upload`)
+const deleteUrl = computed(() => `/api/public/inscriptions/${token.value}/upload`)
+const pendingUploadsUrl = computed(() => `/api/public/inscriptions/${token.value}/uploads`)
 const uploadHeaders = computed<Record<string, string>>(() => ({
   Authorization: `Bearer ${authStore.session?.access_token ?? ''}`,
 }))
@@ -338,7 +340,34 @@ watch(dynamicFields, (fields) => {
   if (dynamicSchemaLoaded.value || fields.length === 0) return
   importDynamicSchema({ fields })
   dynamicSchemaLoaded.value = true
+  // Only now, because importSchema() has just cleared the answers it would
+  // otherwise overwrite.
+  void restorePendingUploads()
 }, { immediate: true })
+
+/**
+ * Bring back the files this participant already uploaded and never submitted
+ * (KAN-67).
+ *
+ * Without this, reloading lost the references while the rows stayed and kept
+ * counting against `maxFiles`: the field was blocked with nothing on screen to
+ * remove. Opportunistic — a failure here must not stand between anyone and the
+ * form, so it is silent and the participant simply uploads again.
+ */
+async function restorePendingUploads() {
+  if (!authStore.session?.access_token) return
+  try {
+    const pending = await $fetch<Record<string, FormFileReference[]>>(
+      pendingUploadsUrl.value,
+      { headers: uploadHeaders.value },
+    )
+    for (const [fieldId, references] of Object.entries(pending ?? {})) {
+      if (references.length > 0) dynamicResponses[fieldId] = references
+    }
+  } catch {
+    // Silent on purpose: see above.
+  }
+}
 
 function onDynamicUpdate(next: FormResponses) {
   // The renderer emits a fresh object; copy onto the composable's reactive
@@ -759,6 +788,7 @@ const registrationClosed = computed(() => contest.value && !contest.value.regist
                     :errors="dynamicErrors"
                     :disabled="submitting"
                     :upload-url="uploadUrl"
+                    :delete-url="deleteUrl"
                     :upload-headers="uploadHeaders"
                     @update:model-value="onDynamicUpdate"
                     @field-change="onDynamicFieldChange"

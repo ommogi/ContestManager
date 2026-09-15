@@ -40,6 +40,13 @@ interface Props {
    * silently kept `File` objects is exactly the data-loss bug this replaces.
    */
   uploadUrl?: string
+  /**
+   * Endpoint that releases one already-uploaded file (KAN-67). Without it the
+   * X only edits the model, which is what made replacing a file impossible:
+   * the server still counted the abandoned row against `maxFiles`. The builder
+   * preview has no contest to delete against and keeps the old behaviour.
+   */
+  deleteUrl?: string
   /** Sent with each upload. The bearer token never travels in the URL. */
   uploadHeaders?: Record<string, string>
 }
@@ -50,6 +57,7 @@ const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   showRequiredIndicator: true,
   uploadUrl: undefined,
+  deleteUrl: undefined,
   uploadHeaders: () => ({})
 })
 
@@ -363,15 +371,63 @@ async function handleFileChange(fieldId: string, event: Event) {
   emit('uploading-change', fieldId, false)
 }
 
+/** Paths currently being released, so the X cannot be double-clicked. */
+const removingPaths = ref<Set<string>>(new Set())
+
+function isRemoving(path: string): boolean {
+  return removingPaths.value.has(path)
+}
+
 /**
  * Detach an already-uploaded file.
  *
- * Only the reference is dropped. The stored object is swept server-side: it is
- * never confirmed against a participant, so the orphan sweep removes it.
+ * The server is told first and the reference is dropped only if it agrees
+ * (KAN-67). Dropping it locally and hoping the sweep caught up was the bug:
+ * the row kept counting against `maxFiles`, so "quita el actual para subir
+ * otro" could not work.
+ *
+ * Without `deleteUrl` — the builder preview — it stays a local edit, which is
+ * all that view can do.
  */
-function removeUploadedFile(fieldId: string, path: string) {
+async function removeUploadedFile(fieldId: string, path: string) {
+  if (isRemoving(path)) return
   delete uploadErrors.value[fieldId]
+
+  const url = props.deleteUrl
+  if (url) {
+    removingPaths.value = new Set(removingPaths.value).add(path)
+    try {
+      await $fetch(url, {
+        method: 'DELETE',
+        headers: props.uploadHeaders,
+        body: { path },
+      })
+    } catch (e) {
+      uploadErrors.value[fieldId] = removeErrorMessage(e)
+      return
+    } finally {
+      const next = new Set(removingPaths.value)
+      next.delete(path)
+      removingPaths.value = next
+    }
+  }
+
   handleInput(fieldId, uploadedFiles(fieldId).filter(file => file.path !== path))
+}
+
+/** Same shape as `uploadErrorMessage`: the server's Spanish text when it sent one. */
+function removeErrorMessage(error: unknown): string {
+  const status = (error as { statusCode?: number; status?: number } | null)?.statusCode
+    ?? (error as { status?: number } | null)?.status
+  const serverMessage = (error as { data?: { message?: string } } | null)?.data?.message
+
+  if (status === 409 && serverMessage) return serverMessage
+  switch (status) {
+    case 401:
+    case 403: return 'Tu sesión ha caducado. Vuelve a iniciar sesión.'
+    case 404: return 'Ese archivo ya no está. Recarga la página.'
+    default: return 'No se ha podido quitar el archivo. Inténtalo de nuevo.'
+  }
 }
 
 function formatFileSize(bytes: number): string {
@@ -690,11 +746,12 @@ function describedBy(field: FormField): string | undefined {
               variant="ghost"
               size="icon"
               class="h-6 w-6 shrink-0"
-              :disabled="disabled"
+              :disabled="disabled || isRemoving(file.path)"
               :aria-label="`Quitar el archivo ${file.name}`"
               @click="removeUploadedFile(field.id, file.path)"
             >
-              <X class="w-3.5 h-3.5" />
+              <Loader2 v-if="isRemoving(file.path)" class="w-3.5 h-3.5 animate-spin" />
+              <X v-else class="w-3.5 h-3.5" />
             </Button>
           </li>
         </ul>

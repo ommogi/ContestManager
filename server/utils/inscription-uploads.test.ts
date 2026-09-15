@@ -6,12 +6,14 @@ import {
   effectiveLimits,
   matchesAccept,
   parseUploadPath,
+  pendingUploadsByField,
   sanitizeFileName,
   sniffMimeType,
   toFileReference,
   validateUpload,
 } from './inscription-uploads'
 import type { FormField, FormFieldFile } from '../../shared/inscription-form'
+import type { PendingUploadRow } from './inscription-uploads'
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -378,5 +380,89 @@ describe('toFileReference', () => {
     // The KAN-59 criterion: JSON.stringify of this is a real object, not `{}`.
     expect(JSON.parse(JSON.stringify(ref))).toEqual(ref)
     expect(Object.keys(JSON.parse(JSON.stringify(ref)))).toHaveLength(5)
+  })
+})
+
+// ─── Resuming a half-filled form (KAN-67) ────────────────────────────────────
+
+describe('pendingUploadsByField', () => {
+  function row(overrides: Partial<PendingUploadRow> = {}): PendingUploadRow {
+    return {
+      field_id: 'partitura',
+      path: 'c-1/u-1/partitura/uuid-obra.pdf',
+      file_name: 'obra.pdf',
+      size_bytes: 1024,
+      mime_type: 'application/pdf',
+      created_at: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    }
+  }
+
+  const schema = [fileField()]
+
+  it('rebuilds the same reference shape an upload returns', () => {
+    const byField = pendingUploadsByField([row()], schema)
+    expect(byField).toEqual({
+      partitura: [{
+        path: 'c-1/u-1/partitura/uuid-obra.pdf',
+        name: 'obra.pdf',
+        size: 1024,
+        mimeType: 'application/pdf',
+        uploadedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    })
+  })
+
+  // PostgREST hands BIGINT back as a string often enough that a reference with
+  // a string `size` would reach the page and render as "NaN KB".
+  it('coerces a bigint that arrived as a string', () => {
+    const [ref] = pendingUploadsByField([row({ size_bytes: '2048' })], schema).partitura!
+    expect(ref!.size).toBe(2048)
+    expect(typeof ref!.size).toBe('number')
+  })
+
+  it('groups by field and keeps upload order oldest first', () => {
+    const byField = pendingUploadsByField([
+      row({ path: 'p/2', file_name: 'b.pdf', created_at: '2026-01-02T00:00:00.000Z' }),
+      row({ path: 'p/1', file_name: 'a.pdf', created_at: '2026-01-01T00:00:00.000Z' }),
+      row({ field_id: 'foto', path: 'p/3', file_name: 'c.png', mime_type: 'image/png' }),
+    ], [fileField(), fileField({ id: 'foto', label: 'Foto' })])
+
+    expect(byField.partitura!.map(r => r.name)).toEqual(['a.pdf', 'b.pdf'])
+    expect(byField.foto!.map(r => r.name)).toEqual(['c.png'])
+  })
+
+  // The schema can be republished between the upload and the reload. A row for
+  // a question that no longer exists must not come back as an answer to it.
+  it('drops rows whose field is gone, hidden, or no longer a file field', () => {
+    const rows = [
+      row({ field_id: 'borrado', path: 'p/1' }),
+      row({ field_id: 'oculto', path: 'p/2' }),
+      row({ field_id: 'ahora-texto', path: 'p/3' }),
+      row({ path: 'p/4' }),
+    ]
+    const byField = pendingUploadsByField(rows, [
+      fileField(),
+      fileField({ id: 'oculto', hidden: true }),
+      { id: 'ahora-texto', type: 'text', label: 'Texto', required: false, order: 1, hidden: false, validation: {} } as FormField,
+    ])
+
+    expect(Object.keys(byField)).toEqual(['partitura'])
+    expect(byField.partitura!).toHaveLength(1)
+  })
+
+  // Lowering maxFiles after the fact must not hide rows: they still count on
+  // the server, so a hidden one is a field the participant cannot unblock.
+  it('returns every row even when the field now admits fewer', () => {
+    const rows = [
+      row({ path: 'p/1', created_at: '2026-01-01T00:00:00.000Z' }),
+      row({ path: 'p/2', created_at: '2026-01-02T00:00:00.000Z' }),
+      row({ path: 'p/3', created_at: '2026-01-03T00:00:00.000Z' }),
+    ]
+    expect(pendingUploadsByField(rows, [fileField({ maxFiles: 1 })]).partitura!).toHaveLength(3)
+  })
+
+  it('returns nothing when there is nothing pending', () => {
+    expect(pendingUploadsByField([], schema)).toEqual({})
   })
 })
