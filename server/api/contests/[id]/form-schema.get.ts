@@ -3,6 +3,8 @@
 
 import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { normalizeFields } from '~~/server/utils/inscription-form-schema'
+import { resolvePublishedFields } from '~~/shared/inscription-form-core'
 
 export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
@@ -26,5 +28,15 @@ export default defineEventHandler(async (event) => {
     throw internalError(event, error, 'inscription_form_schemas.select')
   }
 
-  return data || null
+  if (!data) return null
+
+  // Normalise before handing it to the builder, the way the public endpoint
+  // already does (`server/utils/inscription-form-schema.ts`). Returning the raw
+  // row let the editor show a state the server would refuse to store: after
+  // KAN-65 made `core.email` irreducible, a draft saved while it was still
+  // hideable came back hidden and optional, `validateCoreFields` rejected it on
+  // save, and the controls to fix it no longer existed — the field is not
+  // hideable any more, so there is no eye to click. Reconciling here means the
+  // editor shows what a save would actually store.
+  return { ...data, schema_json: resolvePublishedFields(normalizeFields(data.schema_json)) }
 })

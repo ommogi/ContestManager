@@ -61,6 +61,11 @@ repo pattern wins — flag the divergence to the user, don't silently rewrite.
   `isCore: true` (catalogue + rules in `shared/inscription-form-core.ts`).
   `core.first_name`, `core.last_name`, `core.birthdate` can never be hidden,
   deleted or made optional — `enroll_participant`'s age guards read them.
+  `core.email` is irreducible too since KAN-65, for a different reason: a
+  confirmation mail is the only acknowledgement an inscription gives, and while
+  the field was hideable the server filled `participants.email` from the session
+  anyway, so hiding it promised a minimisation it did not deliver. `dni`,
+  `country` and `phone` remain hideable, and a hidden one must send nothing.
   Core **values** go to the typed `participants` columns, never to
   `responses_json`.
 - **`participants.metadata`**: unused and off-limits for form data (KAN-56).

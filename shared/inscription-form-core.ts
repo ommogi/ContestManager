@@ -42,18 +42,28 @@ export type CoreFieldId =
   | 'core.email'
 
 /**
- * Core fields the business logic cannot do without.
+ * Core fields the form cannot stop asking for.
+ *
+ * The name says "irreducible", not "used by the age guard": these four are here
+ * for two different reasons and it is worth keeping them apart.
  *
  * `first_name`/`last_name` identify the participant on every listing and
  * scorecard; `birthdate` drives the per-category age filter on the public page
  * and the `age_below_min` / `age_above_max` guards inside `enroll_participant`.
- * Hiding any of them would make an enrolment either anonymous or unassignable,
- * so they are never hideable and never optional.
+ * Hiding any of them would make an enrolment either anonymous or unassignable.
+ *
+ * `email` joined them in KAN-65 for a reason of its own: it is the only way a
+ * participant learns that an inscription — possibly a paid one — went through.
+ * It used to be hideable, and hiding it did not work: the server filled
+ * `participants.email` from the authenticated session anyway, so the checkbox
+ * promised a data minimisation the system did not deliver. Rather than keep two
+ * behaviours that contradicted each other, the option was withdrawn.
  */
 export const IRREDUCIBLE_CORE_FIELD_IDS: readonly CoreFieldId[] = [
   'core.first_name',
   'core.last_name',
   'core.birthdate',
+  'core.email',
 ] as const
 
 export interface CoreFieldDefinition {
@@ -142,16 +152,21 @@ export const CORE_FIELD_DEFINITIONS: readonly CoreFieldDefinition[] = [
     defaultRequired: false,
   },
   {
-    // Hideable, but the organization is warned in the builder: this address is
-    // what `sendEnrollmentEmail` writes to. Hiding it means the participant
-    // gets no confirmation mail.
+    // Irreducible since KAN-65. This address is what `sendEnrollmentEmail`
+    // writes to, and a confirmation is the only acknowledgement a participant
+    // gets for an inscription they may have paid for — so the form always asks
+    // for it and always requires it.
+    //
+    // It was hideable before, and hiding it did nothing: the enrolment handler
+    // fell back to the session's address and stored that. See the note on
+    // IRREDUCIBLE_CORE_FIELD_IDS.
     id: 'core.email',
     column: 'email',
     type: 'email',
     label: 'Email',
     order: 6,
-    optionalAllowed: true,
-    hideAllowed: true,
+    optionalAllowed: false,
+    hideAllowed: false,
     defaultRequired: true,
     description: 'Se usa para enviar la confirmación de la inscripción.',
   },

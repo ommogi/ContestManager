@@ -22,6 +22,9 @@ const validEnroll = {
   first_name: 'Ana',
   last_name: 'García',
   birthdate: '2000-03-15',
+  // Required since KAN-65: `core.email` is irreducible, so no form can stop
+  // asking for it and no body may arrive without it.
+  email: 'ana@example.com',
 }
 
 describe('EnrollBodySchema', () => {
@@ -29,7 +32,13 @@ describe('EnrollBodySchema', () => {
     expect(EnrollBodySchema.safeParse(validEnroll).success).toBe(true)
   })
   it('accepts optional fields as null', () => {
-    expect(EnrollBodySchema.safeParse({ ...validEnroll, dni: null, email: null, phone: null }).success).toBe(true)
+    expect(EnrollBodySchema.safeParse({ ...validEnroll, dni: null, phone: null }).success).toBe(true)
+  })
+  // `email` used to be in that list. Sending null is what the page did when the
+  // organization hid the field, and the handler answered by storing the
+  // session's address instead — the whole of KAN-65.
+  it('rejects a null email', () => {
+    expect(EnrollBodySchema.safeParse({ ...validEnroll, email: null }).success).toBe(false)
   })
   it('rejects non-uuid category_id', () => {
     expect(EnrollBodySchema.safeParse({ ...validEnroll, category_id: 'not-a-uuid' }).success).toBe(false)
