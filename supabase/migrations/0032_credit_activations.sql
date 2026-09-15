@@ -2,21 +2,48 @@
 -- À la carte activation top-up. Called from Stripe webhook on
 -- successful checkout sessions whose metadata.type = 'activations'.
 
--- Allow 'purchase_activations' as billing reason
+-- Allow 'purchase_activations' as billing reason.
+--
 -- IF EXISTS added in KAN-61: without it a re-run aborts the whole file, and
 -- this migration still has to be applied to production.
+--
+-- ── CORRECTION, KAN-64 (2026-09-15) ─────────────────────────────────────────
+-- This list used to omit 'refund_ticket', and applying the file as written
+-- would have failed outright: production already holds a billing_transactions
+-- row with that reason, so the ADD CONSTRAINT would reject it and abort the
+-- migration. Had it somehow passed, it would have broken refunds — the
+-- refund_ticket() RPC is called when a participant or a category is deleted
+-- (server/api/participants/[id].delete.ts, server/api/categories/[id].delete.ts)
+-- and its INSERT would have violated the new constraint.
+--
+-- The cause is worth recording because it is not a typo. A CHECK constraint
+-- cannot be appended to, so every migration that adds a reason must restate the
+-- whole list — and this file restated the list as of 0022, on a branch that did
+-- not carry 0026:
+--
+--   0022_billing_reason_purchase_tickets  8 reasons
+--   0026_refund_ticket                    those 8 + refund_ticket  ← deployed
+--   0032 (this file, as written)          those 8 + purchase_activations
+--
+-- The list below is the union, and the rule that follows from it now lives in
+-- docs/database.md: a literal list must be rebuilt from the DEPLOYED state, not
+-- from the previous migration in the repo.
 ALTER TABLE public.billing_transactions DROP CONSTRAINT IF EXISTS billing_transactions_reason_check;
 ALTER TABLE public.billing_transactions ADD CONSTRAINT billing_transactions_reason_check
   CHECK (reason = ANY (ARRAY[
+    -- 0022
     'purchase_bundle',
     'purchase_tickets',
-    'purchase_activations',
     'signup_bonus',
     'enrollment',
     'csv_import',
     'manual_add',
     'contest_activation',
-    'admin_adjust'
+    'admin_adjust',
+    -- 0026
+    'refund_ticket',
+    -- this migration
+    'purchase_activations'
   ]));
 
 CREATE OR REPLACE FUNCTION public.credit_activations(
@@ -26,7 +53,7 @@ CREATE OR REPLACE FUNCTION public.credit_activations(
   p_stripe_session_id TEXT,
   p_stripe_event_id   TEXT
 ) RETURNS INT
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_new_balance INT;
 BEGIN
