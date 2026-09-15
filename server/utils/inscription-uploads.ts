@@ -460,3 +460,66 @@ export function toFileReference(
     uploadedAt,
   }
 }
+
+// ── Resuming a half-filled form (KAN-67) ────────────────────────────────────
+// Until now the only way a `FormFileReference` existed was as the return value
+// of an upload, held in the page's memory. Reloading lost it, and the row it
+// left behind kept counting against `maxFiles` — the field went dead with
+// nothing on screen to explain why.
+//
+// `inscription_uploads_owner_field_idx` was created for this lookup; migration
+// 0054 calls it "resuming a half-filled form, and the per-field maxFiles
+// count". This is the first half finally being used.
+
+/** The columns the reclaim query selects. Shaped like the table, not like a DTO. */
+export interface PendingUploadRow {
+  field_id: string
+  path: string
+  file_name: string
+  size_bytes: number | string
+  mime_type: string
+  created_at: string
+}
+
+/**
+ * Group a participant's pending uploads by field, dropping the ones no longer
+ * uploadable: the published schema may have changed since, and a row for a
+ * deleted, retyped or hidden field must not come back as an answer to a
+ * question that no longer asks it. What is dropped here is left to the orphan
+ * sweep, exactly as if the page had never been reopened.
+ *
+ * Deliberately NOT clamped to `effectiveLimits().maxFiles`. If the organizer
+ * lowered the limit after the files were stored, the extra rows still count on
+ * the server, so hiding them would recreate the very dead end this fixes:
+ * a blocked field with nothing visible to remove. Showing all of them lets the
+ * participant delete down to the new limit.
+ */
+export function pendingUploadsByField(
+  rows: readonly PendingUploadRow[],
+  fields: readonly FormField[],
+): Record<string, FormFileReference[]> {
+  const uploadable = new Set(
+    fields.filter(f => isFileField(f) && f.hidden !== true).map(f => f.id),
+  )
+
+  const byField: Record<string, FormFileReference[]> = {}
+
+  // Oldest first, so the order a participant sees after a reload is the order
+  // they uploaded in.
+  const ordered = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at))
+
+  for (const row of ordered) {
+    if (!uploadable.has(row.field_id)) continue
+    const reference: FormFileReference = {
+      path: row.path,
+      name: row.file_name,
+      // BIGINT comes back from PostgREST as a string often enough to matter.
+      size: Number(row.size_bytes),
+      mimeType: row.mime_type,
+      uploadedAt: row.created_at,
+    }
+    ;(byField[row.field_id] ??= []).push(reference)
+  }
+
+  return byField
+}
