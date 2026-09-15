@@ -41,7 +41,11 @@ export const EnrollBodySchema = z.object({
   birthdate: isoDateString,
   dni: dniString,
   country: z.string().min(2).max(100).nullable().optional(),
-  email: emailString.nullable().optional(),
+  // Required since KAN-65, the same way first_name/last_name/birthdate are:
+  // `core.email` can no longer be hidden or made optional, so every form asks
+  // for it. This is what stops a handcrafted body from omitting it and having
+  // the server fill `participants.email` from the session instead.
+  email: emailString,
   phone: phoneString,
   ...formSubmissionFields,
 })
@@ -81,7 +85,11 @@ export const CheckoutEnrollmentSchema = z.object({
   birthdate: isoDateString,
   dni: dniString,
   country: z.string().min(2).max(100).nullable().optional(),
-  email: emailString.nullable().optional(),
+  // Required since KAN-65, the same way first_name/last_name/birthdate are:
+  // `core.email` can no longer be hidden or made optional, so every form asks
+  // for it. This is what stops a handcrafted body from omitting it and having
+  // the server fill `participants.email` from the session instead.
+  email: emailString,
   phone: phoneString,
   ...formSubmissionFields,
 })

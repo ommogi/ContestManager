@@ -78,7 +78,12 @@ export default defineEventHandler(async (event) => {
     )
   }
 
-  const effectiveEmail = email || user.email
+  // No `|| user.email` fallback since KAN-65: `core.email` is irreducible, so
+  // the body always carries the address the participant typed. The same value
+  // serves three purposes here — Stripe's `customer_email`, the idempotency
+  // lookup, and `metadata.email`, which the webhook writes to
+  // `participants.email` — and all three should be that address, never the
+  // session's.
 
   const config = useRuntimeConfig()
   const baseUrl = config.appBaseUrl || 'http://localhost:3000'
@@ -91,7 +96,7 @@ export default defineEventHandler(async (event) => {
     const existingSessions = await stripe.checkout.sessions.list({
       limit: 1,
       status: 'open',
-      customer_email: effectiveEmail ?? undefined,
+      customer_email: email,
     })
     const existing = existingSessions.data.find(
       (s) => s.metadata?.user_id === user.id && s.metadata?.contest_id === contest.id && s.metadata?.category_id === category_id && s.status === 'open'
@@ -130,7 +135,7 @@ export default defineEventHandler(async (event) => {
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
     payment_method_types: ['card'],
-    customer_email: effectiveEmail ?? undefined,
+    customer_email: email,
     line_items: [{
       quantity: 1,
       price_data: {
@@ -164,7 +169,7 @@ export default defineEventHandler(async (event) => {
       birthdate,
       dni: dni ?? '',
       country: country ?? '',
-      email: effectiveEmail ?? '',
+      email,
       phone: phone ?? '',
       // Opaque pointer into `pending_form_responses`. Absent when the contest
       // has no published form, so those sessions keep their old 13 keys.

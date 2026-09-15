@@ -38,12 +38,17 @@ export default defineEventHandler(async (event) => {
   const { category_id, first_name, last_name, birthdate } = parsed.data
   const dni = parsed.data.dni ?? null
   const country = parsed.data.country ?? null
-  const email = parsed.data.email ?? null
   const phone = parsed.data.phone ?? null
+  // `email` is required by the schema, so there is no `?? null` and no fallback
+  // to `user.email` (KAN-65). That fallback used to fill `participants.email`
+  // from the authenticated session whenever the participant did not supply one,
+  // which made hiding the field in the builder a promise the server broke. The
+  // field is irreducible now, so the body always carries the address the
+  // participant actually typed — and nothing else reaches the database.
+  const email = parsed.data.email
 
   const client = serverSupabaseUser(event)
   const admin = serverSupabaseAdmin()
-  const effectiveEmail = email || user.email
 
   // Validate the configurable form *before* anything is created (KAN-49).
   // Runs on every request, not only when the body carries `responses`: the
@@ -68,7 +73,7 @@ export default defineEventHandler(async (event) => {
     p_birthdate: birthdate,
     p_dni: dni,
     p_country: country,
-    p_email: effectiveEmail,
+    p_email: email,
     p_phone: phone,
   })
 
@@ -154,29 +159,27 @@ export default defineEventHandler(async (event) => {
   }
 
   // Fire-and-forget confirmation email
-  if (effectiveEmail) {
-    try {
-      const [contestRes, categoryRes] = await Promise.all([
-        admin.rpc('get_contest_by_token', { p_token: token }),
-        admin.from('categories').select('name').eq('id', category_id).single(),
-      ])
-      const contest = (contestRes.data as any[])?.[0]
-      const categoryName = (categoryRes.data as any)?.name ?? 'Categoría'
-      if (contest) {
-        // Do not await — user should not wait for email delivery
-        sendEnrollmentEmail({
-          to: effectiveEmail,
-          first_name,
-          contest_name: contest.name,
-          category_name: categoryName,
-          amount_paid_cents: null,
-          is_paid: false,
-          contest_slug: contest.slug ?? null,
-        })
-      }
-    } catch (e) {
-      console.error('[enroll] failed to dispatch email:', e)
+  try {
+    const [contestRes, categoryRes] = await Promise.all([
+      admin.rpc('get_contest_by_token', { p_token: token }),
+      admin.from('categories').select('name').eq('id', category_id).single(),
+    ])
+    const contest = (contestRes.data as any[])?.[0]
+    const categoryName = (categoryRes.data as any)?.name ?? 'Categoría'
+    if (contest) {
+      // Do not await — user should not wait for email delivery
+      sendEnrollmentEmail({
+        to: email,
+        first_name,
+        contest_name: contest.name,
+        category_name: categoryName,
+        amount_paid_cents: null,
+        is_paid: false,
+        contest_slug: contest.slug ?? null,
+      })
     }
+  } catch (e) {
+    console.error('[enroll] failed to dispatch email:', e)
   }
 
   return { participant_id: data }

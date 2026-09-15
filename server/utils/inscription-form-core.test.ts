@@ -14,7 +14,7 @@ import {
   resolvePublishedFields,
   visibleFields,
 } from '../../shared/inscription-form-core'
-import { FormSchemaBodySchema } from './schemas'
+import { CheckoutEnrollmentSchema, EnrollBodySchema, FormSchemaBodySchema } from './schemas'
 import type { FormField } from '../../shared/inscription-form'
 
 function custom(id: string, order: number, overrides: Partial<FormField> = {}): FormField {
@@ -41,10 +41,16 @@ describe('core field catalogue', () => {
     ])
   })
 
-  it('marks exactly first_name, last_name and birthdate as irreducible', () => {
-    expect(IRREDUCIBLE_CORE_FIELD_IDS).toEqual(['core.first_name', 'core.last_name', 'core.birthdate'])
+  // `core.email` joined the list in KAN-65, for a different reason than the
+  // other three: not the age guard, but the fact that a confirmation mail is
+  // the only acknowledgement an inscription gives.
+  it('marks first_name, last_name, birthdate and email as irreducible', () => {
+    expect(IRREDUCIBLE_CORE_FIELD_IDS).toEqual([
+      'core.first_name', 'core.last_name', 'core.birthdate', 'core.email',
+    ])
     expect(isIrreducibleCoreFieldId('core.dni')).toBe(false)
-    expect(isIrreducibleCoreFieldId('core.email')).toBe(false)
+    expect(isIrreducibleCoreFieldId('core.country')).toBe(false)
+    expect(isIrreducibleCoreFieldId('core.phone')).toBe(false)
   })
 
   it('never lets an irreducible field be hidden or optional', () => {
@@ -93,8 +99,8 @@ describe('buildDefaultFormFields', () => {
 })
 
 describe('validateCoreFields', () => {
-  it('accepts hiding dni, country, phone and email', () => {
-    for (const id of ['core.dni', 'core.country', 'core.phone', 'core.email']) {
+  it('accepts hiding dni, country and phone', () => {
+    for (const id of ['core.dni', 'core.country', 'core.phone']) {
       const fields = defaults.map(f => (f.id === id ? { ...f, hidden: true, required: false } : f))
       expect(validateCoreFields(fields)).toEqual([])
     }
@@ -131,10 +137,10 @@ describe('validateCoreFields', () => {
     expect(validateCoreFields([custom('obra', 0), custom('profesor', 1)])).toEqual([])
   })
 
-  it('but demands the irreducible three once any core field is declared', () => {
+  it('but demands every irreducible field once any core field is declared', () => {
     const issues = validateCoreFields([core('core.dni'), custom('obra', 1)])
     expect(issues.map(i => i.fieldId).sort()).toEqual([
-      'core.birthdate', 'core.first_name', 'core.last_name',
+      'core.birthdate', 'core.email', 'core.first_name', 'core.last_name',
     ])
   })
 
@@ -326,5 +332,103 @@ describe('resolvePublishedFields', () => {
   it('is idempotent on an already-resolved list', () => {
     const once = resolvePublishedFields([custom('obra', 0)])
     expect(resolvePublishedFields(once)).toEqual(once)
+  })
+})
+
+// ─── The email is no longer hideable (KAN-65) ────────────────────────────────
+//
+// Hiding it used to be offered and used to do nothing: `enroll.post.ts` filled
+// `participants.email` from the authenticated session whenever the body carried
+// none, so a form that promised not to ask for the address stored it anyway.
+// The option was withdrawn rather than left contradicting itself.
+
+describe('core.email is irreducible', () => {
+  it('cannot be hidden, and says so in Spanish', () => {
+    const fields = defaults.map(f => (f.id === 'core.email' ? { ...f, hidden: true } : f))
+    const issues = validateCoreFields(fields)
+    expect(issues).toHaveLength(1)
+    expect(issues[0]!.fieldId).toBe('core.email')
+    expect(issues[0]!.message).toContain('no se puede ocultar')
+  })
+
+  it('cannot be made optional', () => {
+    const fields = defaults.map(f => (
+      f.id === 'core.email' ? { ...f, required: false, validation: { required: false } } : f
+    ))
+    const issues = validateCoreFields(fields)
+    expect(issues).toHaveLength(1)
+    expect(issues[0]!.fieldId).toBe('core.email')
+    expect(issues[0]!.message).toContain('no puede marcarse como opcional')
+  })
+
+  it('cannot be dropped from a schema that declares core fields', () => {
+    const fields = defaults.filter(f => f.id !== 'core.email')
+    const issues = validateCoreFields(fields)
+    expect(issues.map(i => i.fieldId)).toEqual(['core.email'])
+    expect(issues[0]!.message).toContain('no se puede eliminar')
+  })
+
+  // The migration that is not a migration: production has published schemas
+  // (contest "Prueba", v1-v3) storing `core.email` hidden and optional. They are
+  // normalised on read, so no SQL had to touch them.
+  it('heals a schema stored while it was still hideable', () => {
+    const stored = defaults.map(f => (
+      f.id === 'core.email'
+        ? { ...f, hidden: true, required: false, validation: { required: false } }
+        : f
+    ))
+    const healed = reconcileFormFields(stored)
+    const email = healed.find(f => f.id === 'core.email')!
+
+    expect(email.hidden).toBe(false)
+    expect(email.required).toBe(true)
+    expect(email.validation?.required).toBe(true)
+    expect(visibleFields(healed).map(f => f.id)).toContain('core.email')
+    expect(validateCoreFields(healed)).toEqual([])
+  })
+
+  it('comes back visible when a stored schema omitted it entirely', () => {
+    const stored = defaults.filter(f => f.id !== 'core.email')
+    const email = reconcileFormFields(stored).find(f => f.id === 'core.email')!
+    expect(email.hidden).toBe(false)
+    expect(email.required).toBe(true)
+  })
+})
+
+// ─── The server side of the same rule ────────────────────────────────────────
+
+describe('the enrolment body requires an email', () => {
+  const body = {
+    category_id: '11111111-1111-4111-8111-111111111111',
+    first_name: 'Ada',
+    last_name: 'Lovelace',
+    birthdate: '1990-05-04',
+    email: 'ada@example.com',
+  }
+
+  it('accepts a body that carries one', () => {
+    expect(EnrollBodySchema.safeParse(body).success).toBe(true)
+    expect(CheckoutEnrollmentSchema.safeParse(body).success).toBe(true)
+  })
+
+  // The hole KAN-65 closes: without this, a handcrafted request omitting the
+  // key reached a handler that filled it in from the session.
+  it('rejects a body that omits it', () => {
+    const { email: _omitted, ...withoutEmail } = body
+    for (const schema of [EnrollBodySchema, CheckoutEnrollmentSchema]) {
+      const result = schema.safeParse(withoutEmail)
+      expect(result.success).toBe(false)
+      if (result.success) continue
+      expect(result.error.issues.some(i => i.path[0] === 'email')).toBe(true)
+    }
+  })
+
+  it('rejects an explicit null, which is what the page used to send', () => {
+    expect(EnrollBodySchema.safeParse({ ...body, email: null }).success).toBe(false)
+    expect(CheckoutEnrollmentSchema.safeParse({ ...body, email: null }).success).toBe(false)
+  })
+
+  it('still rejects a malformed address', () => {
+    expect(EnrollBodySchema.safeParse({ ...body, email: 'no-arroba' }).success).toBe(false)
   })
 })

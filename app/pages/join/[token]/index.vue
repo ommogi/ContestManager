@@ -279,9 +279,10 @@ const visibleCoreIds = computed(
  *
  * A field the organization hid is one it chose not to collect, so nothing is
  * sent for it: the profile autofill writes to `form` regardless of the schema
- * and would otherwise smuggle in a value the contest never asked for. All four
- * of these are `.nullable().optional()` on the server; the three irreducible
- * fields are never hideable and always carry their value.
+ * and would otherwise smuggle in a value the contest never asked for. The three
+ * it still serves — dni, country, phone — are `.nullable().optional()` on the
+ * server. `core.email` left this helper in KAN-65: it is irreducible now, so it
+ * is never hidden and never null.
  */
 function optionalCoreValue(fieldId: string): string | null {
   if (!visibleCoreIds.value.has(fieldId)) return null
@@ -292,8 +293,9 @@ function optionalCoreValue(fieldId: string): string | null {
  * Required core fields left empty.
  *
  * Driven by the schema, so an organization that marked `core.dni` optional
- * stops blocking on it. The three irreducible fields always come back
- * `required`, so they are always covered.
+ * stops blocking on it. The four irreducible fields — name, surname, birthdate
+ * and, since KAN-65, email — always come back `required`, so they are always
+ * covered.
  */
 const missingRequiredCore = computed<FormField[]>(() =>
   orderedFields.value.filter((field) => {
@@ -395,8 +397,9 @@ async function submit() {
     await navigateTo(loginHref.value)
     return
   }
-  // The irreducible floor, unchanged: the server and the SQL age guards
-  // require these three whatever the schema says.
+  // The floor the SQL age guards need, whatever the schema says. `core.email`
+  // is irreducible too since KAN-65, but it is covered one check below by
+  // `missingRequiredCore`, which reads `required` off the schema.
   if (!form.category_id || !form.first_name || !form.last_name || !form.birthdate) {
     toast.error('Completa los campos obligatorios.')
     return
@@ -438,7 +441,12 @@ async function submit() {
       birthdate: form.birthdate,
       dni: optionalCoreValue('core.dni'),
       country: optionalCoreValue('core.country'),
-      email: optionalCoreValue('core.email'),
+      // Not `optionalCoreValue`: since KAN-65 the email is irreducible, always
+      // visible and always required, so it is never the `null` that helper
+      // exists to produce. `missingRequiredCore` below blocks an empty one with
+      // an inline message before this runs, rather than letting the server
+      // answer 400.
+      email: coreText('core.email').trim(),
       phone: optionalCoreValue('core.phone'),
       // Only sent when the contest actually has a published form, so a
       // contest without one posts a byte-identical body to before.
