@@ -43,7 +43,7 @@ hace tiempo y comparar nombres no prueba nada.
 | Migración del repo | Objeto comprobado | ¿En producción? |
 |---|---|---|
 | `0028_notifications_advanced` | `notify_schedule_assigned()` | ❌ **No** |
-| `0032_credit_activations` | `credit_activations()` | ❌ **No** |
+| `0032_credit_activations` | `credit_activations()` | ✅ Sí, **aplicada el 15/09/2026** (KAN-64) |
 | `0036_new_pricing` / `0044_updated_bundle_pricing` | `get_plan_bundles()` | ✅ Sí |
 | `0037_onboarding_org_fields` | `organizations.logo_url` | ✅ Sí |
 | `0037_onboarding_org_fields` | `contact_phone`, bucket `org_logos` | ❌ **No** |
@@ -92,20 +92,42 @@ registrada como `email_logs` (`20260514085642`) que nunca se commiteó. El
 `waitlist` vivía en producción desde el 18 de mayo de 2026 sin fichero que la
 describiera. La incorpora `0055_waitlist.sql`, reconstruida del esquema vivo.
 
-### Consecuencia con impacto real: la compra de activaciones está muerta
+### Consecuencia con impacto real: la compra de activaciones estuvo muerta
 
-`credit_activations()` **no existe en producción**, pero
+*Resuelto el 15 de septiembre de 2026 (KAN-64). Se deja escrito porque es el
+mejor ejemplo de por qué esta deriva importa, y porque el arreglo destapó una
+trampa peor.*
+
+`credit_activations()` no existía en producción, pero
 `organizations.activation_balance` sí, y `handleActivationsTopup` en
 `server/services/stripe-webhook.ts` llama a esa RPC cuando alguien compra un
-pack de activaciones.
+pack de activaciones. Se podía **gastar** saldo —`consume_activation()` sí
+estaba— pero no **comprarlo**. El primer cliente que lo intentara habría pagado,
+no habría recibido nada, y Stripe habría reintentado indefinidamente contra una
+función ausente. Nadie llegó a sufrirlo: cero transacciones
+`purchase_activations` en `billing_transactions`.
 
-Hoy nadie lo ha sufrido: no hay ni una transacción `purchase_activations` en
-`billing_transactions`, así que el camino no se ha ejercitado nunca. Pero el
-primer cliente que compre activaciones **paga, no recibe nada, y Stripe
-reintenta indefinidamente** contra una función que no está.
+No es deuda de documentación: era un camino de cobro roto que nadie vería hasta
+que un cliente lo pisara.
 
-Es el ejemplo de por qué esta deriva importa: no es deuda de documentación, es
-un camino de cobro roto que nadie vería hasta que un cliente lo pisara.
+#### La trampa: aplicar la migración tal cual habría roto los reembolsos
+
+`0032` no solo crea la función, también rehace
+`billing_transactions_reason_check` con una **lista literal**. Y esa lista se
+escribió sobre una rama que no llevaba `0026`:
+
+| Fichero | Motivos |
+|---|---|
+| `0022_billing_reason_purchase_tickets` | 8 |
+| `0026_refund_ticket` | esos 8 + `refund_ticket` ← lo que estaba desplegado |
+| `0032_credit_activations`, como estaba escrita | los 8 de **0022** + `purchase_activations`, **sin `refund_ticket`** |
+
+Aplicarla sin tocar habría fallado en el acto —producción ya tenía una fila con
+`reason = 'refund_ticket'`, así que el `ADD CONSTRAINT` la habría rechazado— y,
+de haber colado, habría roto `refund_ticket()`, que se llama al borrar un
+participante o una categoría.
+
+Se corrigió a la unión de las tres listas (diez motivos) antes de aplicarla.
 
 ---
 
@@ -125,14 +147,15 @@ reintentarlo. Ya lleva el `IF EXISTS`.
 
 ```
 0028_notifications_advanced
-0032_credit_activations          ← desbloquea la compra de activaciones
 0037_onboarding_org_fields
 0041_block_round_start_if_contest_not_active
 0046_add_missing_indexes
 0055_waitlist                    ← no-op en producción, necesaria en entornos nuevos
 ```
 
-Ninguna se ha aplicado todavía: **es decisión de Omar**, no de un agente.
+`0032` ya no está en la lista: se aplicó el 15 de septiembre de 2026 (KAN-64),
+con una corrección previa que se cuenta más abajo. El resto sigue sin aplicar:
+**es decisión de Omar**, no de un agente.
 
 ---
 
@@ -156,10 +179,24 @@ Ninguna se ha aplicado todavía: **es decisión de Omar**, no de un agente.
    ```
 
    Un `null` ahí es la señal que faltó durante meses.
-5. **Funciones `SECURITY DEFINER` siempre con `SET search_path`.** Referencias
+5. **Una lista literal se reconstruye desde lo desplegado, no desde el fichero
+   anterior del repo.** Una `CHECK` no se puede ampliar: hay que soltarla y
+   volver a crearla con la lista entera, así que cada migración que añade un
+   valor repite todas las demás. Si se copia la lista de la migración anterior
+   del repo y otra rama añadió un valor por su cuenta, la nueva lo borra. Es la
+   variante cara de la regla 4, porque el fallo no aparece al escribir la
+   migración sino al aplicarla —o peor, después, cuando algo intenta insertar el
+   valor que desapareció—. `0032` lo hizo con `refund_ticket`; el detalle está
+   más arriba. Antes de tocar una constraint así:
+
+   ```sql
+   select pg_get_constraintdef(oid) from pg_constraint where conname = '…';
+   ```
+
+6. **Funciones `SECURITY DEFINER` siempre con `SET search_path`.** Referencias
    buenas: `0038_scores_rls_no_recursion.sql` y
    `0040_fix_recursion_and_org_owner_member.sql`.
-6. **Cada tabla de producción, su fichero en el repo.** Si aparece una tabla sin
+7. **Cada tabla de producción, su fichero en el repo.** Si aparece una tabla sin
    migración, se reconstruye del esquema vivo y se commitea, como hizo `0055`.
 
 ### Auditoría rápida
