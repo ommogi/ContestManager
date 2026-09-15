@@ -48,11 +48,40 @@ hace tiempo y comparar nombres no prueba nada.
 | `0037_onboarding_org_fields` | `organizations.logo_url` | ✅ Sí |
 | `0037_onboarding_org_fields` | `contact_phone`, bucket `org_logos` | ❌ **No** |
 | `0039_add_rules_column` | `contests.rules` | ✅ Sí |
+| `0039_add_rules_column` | `get_contest_by_token` **con filtro de estado** | ❌ **No** — ver abajo |
 | `0041_block_round_start_if_contest_not_active` | la función homónima | ❌ **No** |
 | `0043_backfill_participant_names` | `_participants_backfill_name()` | ✅ Sí |
 | `0046_add_missing_indexes` | `contests_registration_token_idx` y `participants_payment_intent_idx` | ❌ **No** |
 | `0047_email_logs` | `public.email_logs` | ✅ Sí, pero **por otra vía** |
 | — | `public.waitlist` | ✅ Sí, **sin migración en el repo** hasta 0055 |
+
+### La misma migración, aplicada a medias
+
+`0039_add_rules_column` es el caso más traicionero del inventario, porque
+**parte de ella sí está**: `contests.rules` existe en producción. Pero el mismo
+fichero redefine `get_contest_by_token` añadiendo
+`AND c.status IN ('active','finished')`, y la función desplegada **no tiene ese
+filtro**. Su cuerpo real es:
+
+```sql
+WHERE c.registration_token = p_token
+LIMIT 1
+```
+
+Comprobado el 15 de septiembre de 2026 con `pg_get_functiondef`, y confirmado
+de extremo a extremo: el endpoint público de schema para un concurso en `draft`
+responde **200 con el formulario publicado**, no 404.
+
+Consecuencia: un enlace de inscripción sigue resolviendo para un concurso en
+borrador o terminado, y lo único que impide inscribirse es
+`contests.registration_open`. Severidad baja —el token es la credencial y un
+schema de formulario no es secreto—, pero desmonta una afirmación que llegué a
+escribir en `0057_invitation_expiry.sql` y en el PR de KAN-40.
+
+**Cómo se coló:** leyendo el fichero de migración en lugar de la función
+desplegada. Es exactamente lo que la regla 4 de más abajo existe para evitar, y
+lo cometí yo después de escribirla. Que una migración esté registrada, o que
+parte de sus objetos existan, no prueba que se aplicara entera.
 
 Dos matices que la tabla no recoge:
 

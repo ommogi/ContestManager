@@ -15,11 +15,24 @@
 --
 -- ── Scope: the two invitation tokens, not the inscription link ──────────────
 -- `contests.registration_token` deliberately gets no expiry. It is not an
--- invitation: it is the contest's public inscription link, and it is already
--- bounded twice — by `contests.registration_open`, which the enroll, checkout
--- and upload handlers check, and by `status IN ('active','finished')` inside
--- `get_contest_by_token` (0039). A third condition that can contradict the
--- other two is worse than two that agree.
+-- invitation: it is the contest's public inscription link, and what actually
+-- bounds it is `contests.registration_open`, checked by the enroll, checkout
+-- and upload handlers. Adding a second, independent deadline that can
+-- contradict that flag is worse than one condition that means what it says.
+--
+-- CORRECTION (verified against production 2026-09-15). An earlier version of
+-- this comment also claimed `get_contest_by_token` filters
+-- `status IN ('active','finished')`. It does not. That clause exists in
+-- `0039_add_rules_column.sql` in this repo, but the **deployed** function is
+-- just `WHERE c.registration_token = p_token LIMIT 1` — no status filter at
+-- all. Confirmed by hitting the public schema endpoint for a contest in
+-- `draft`: it answers 200 with the published form, not 404.
+--
+-- So a token keeps resolving for a draft or finished contest, and only
+-- `registration_open` stops an enrolment. Low severity — the token is the
+-- capability and a form schema is not a secret — but the claim was false, and
+-- it was made by reading a migration file instead of the deployed function,
+-- which is the exact mistake `docs/database.md` exists to prevent.
 
 -- ────────────────────────────────────────────────────────────────────────────
 -- 1. The column
