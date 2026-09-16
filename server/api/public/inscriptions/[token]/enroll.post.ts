@@ -8,6 +8,7 @@ import {
   confirmInscriptionUploads,
   persistParticipantFormResponses,
   prepareFormSubmission,
+  stripHiddenCoreValues,
 } from '~~/server/utils/inscription-form-responses'
 
 const ERROR_MESSAGES: Record<string, { status: number; message: string }> = {
@@ -36,9 +37,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
   const { category_id, first_name, last_name, birthdate } = parsed.data
-  const dni = parsed.data.dni ?? null
-  const country = parsed.data.country ?? null
-  const phone = parsed.data.phone ?? null
+  // dni/country/phone are read further down, once the published schema says
+  // whether this contest asks for them at all (KAN-70).
   // `email` is required by the schema, so there is no `?? null` and no fallback
   // to `user.email` (KAN-65). That fallback used to fill `participants.email`
   // from the authenticated session whenever the participant did not supply one,
@@ -56,6 +56,26 @@ export default defineEventHandler(async (event) => {
   // key cannot skip a required field. Returns null when the contest has no
   // published form, which leaves the rest of this handler untouched.
   const submission = await prepareFormSubmission(admin, token, parsed.data)
+
+  // Drop the core values this contest's form does not ask for (KAN-70).
+  //
+  // `optionalCoreValue()` on the public page already sends `null` for a hidden
+  // field, so nothing the UI produces changes shape here; what changes is that
+  // a handcrafted body can no longer put a DNI into `participants.dni` for a
+  // contest whose form hides the DNI. Silently, by design — see
+  // `stripHiddenCoreValues`.
+  //
+  // `submission` is null when the contest has no published form. Then there is
+  // no such thing as a hidden field and the body passes through exactly as it
+  // did before, which is what keeps the existing contests untouched.
+  const { dni, country, phone } = stripHiddenCoreValues(
+    {
+      dni: parsed.data.dni ?? null,
+      country: parsed.data.country ?? null,
+      phone: parsed.data.phone ?? null,
+    },
+    submission?.hiddenCoreColumns,
+  )
 
   // Object keys are `{contest_id}/{user_id}/…`, so a reference to somebody
   // else's upload is detectable before anything is created. Runs here rather

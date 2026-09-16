@@ -26,10 +26,16 @@ import { createError } from 'h3'
 import { randomUUID } from 'node:crypto'
 import type { createClient } from '@supabase/supabase-js'
 import type {
+  FormField,
   FormFileReference,
   FormResponseValue,
   FormResponses,
 } from '../../shared/inscription-form'
+import {
+  coreFieldDefinition,
+  resolvePublishedFields,
+  type CoreFieldDefinition,
+} from '../../shared/inscription-form-core'
 import {
   FormSchemaLookupError,
   loadPublishedFormSchemaForContest,
@@ -63,6 +69,22 @@ export interface FormSubmission {
   contestId: string
   formSchemaId: string
   responses: FormResponses
+}
+
+/**
+ * What `prepareFormSubmission` hands back: the answers to store, plus the core
+ * columns this contest's published form does NOT ask for (KAN-70).
+ *
+ * Kept apart from `FormSubmission` on purpose. `FormSubmission` is "answers
+ * belonging to a schema" and that is all a parked draft can ever be — by the
+ * time the webhook reads one back, the core values have already been decided
+ * and written into the Checkout Session's metadata. Only the request that still
+ * holds the body has any use for the hidden list, so only that request's type
+ * carries it, and no producer has to invent an empty array to satisfy a field
+ * it knows nothing about.
+ */
+export interface PreparedFormSubmission extends FormSubmission {
+  hiddenCoreColumns: CoreFieldColumn[]
 }
 
 /** The two optional keys the public inscription body may carry. */
@@ -148,12 +170,19 @@ function assertResponsesWithinLimit(responses: FormResponses): void {
  *  3. Validation runs even when the body carries no `responses` at all, so a
  *     handcrafted request cannot skip a required field by simply omitting the
  *     key — `assertValidFormResponses` sees `{}` and raises `required`.
+ *
+ * It also reports which core columns the form does not ask for (KAN-70). That
+ * rides along on the return value instead of being looked up separately for one
+ * reason: the schema is already in hand here. A second read would be a second
+ * round-trip that could disagree with this one — the organizer can publish a
+ * new version between the two — and the answers would then be validated against
+ * one version while the core values were filtered against another.
  */
 export async function prepareFormSubmission(
   client: FormSchemaRpcClient,
   token: string,
   body: RawFormSubmissionBody,
-): Promise<FormSubmission | null> {
+): Promise<PreparedFormSubmission | null> {
   let contestId: string
   let published
   try {
@@ -197,7 +226,79 @@ export async function prepareFormSubmission(
   // ids the schema declares — so nothing unvalidated reaches the database.
   const responses = assertValidFormResponses(answerable, submitted)
 
-  return { contestId, formSchemaId: published.id, responses }
+  return {
+    contestId,
+    formSchemaId: published.id,
+    responses,
+    hiddenCoreColumns: resolveHiddenCoreColumns(published.fields),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hidden core fields (KAN-70)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A `participants` column a core field writes to. */
+export type CoreFieldColumn = CoreFieldDefinition['column']
+
+/** Core values as they travel in an enrolment body, keyed by their column. */
+export type CoreFieldValues = Partial<Record<CoreFieldColumn, string | null>>
+
+/**
+ * The core columns a published form does not ask for.
+ *
+ * Hiding a core field means "I do not collect this", and since KAN-56 exactly
+ * three can be hidden: `core.dni`, `core.country`, `core.phone`. The public
+ * page already honours it — `optionalCoreValue()` sends `null` for a field the
+ * schema does not show, so the profile autofill cannot smuggle one in — but a
+ * request that never touches the UI carries whatever it likes. This is what the
+ * enrolment handlers use to ignore those values (see `stripHiddenCoreValues`).
+ *
+ * `resolvePublishedFields` is applied rather than trusted to have been: it is
+ * idempotent, `loadPublishedFormSchemaForContest` already runs it, and running
+ * it again costs one pass over seven fields while making this function correct
+ * for a raw `schema_json` too. It is also what turns an omitted core entry into
+ * an explicitly hidden one, which is the shape the builder saves.
+ *
+ * `hideAllowed` is checked on top of `hidden`, so the four irreducible fields
+ * can never appear here even if a schema row claims they are hidden.
+ */
+export function resolveHiddenCoreColumns(fields: FormField[] | null | undefined): CoreFieldColumn[] {
+  const columns: CoreFieldColumn[] = []
+  for (const field of resolvePublishedFields(fields)) {
+    if (field.hidden !== true) continue
+    const definition = coreFieldDefinition(field.id)
+    if (!definition?.hideAllowed) continue
+    columns.push(definition.column)
+  }
+  return columns
+}
+
+/**
+ * Blanks the core values the form did not ask for.
+ *
+ * Silently, and that is the decision: a value for a hidden field is dropped
+ * rather than answered with a 400. An organization can hide a field while
+ * somebody is filling the form in, and refusing the submission would make the
+ * participant pay for the organizer's edit. Nothing legitimate is lost either —
+ * a form that does not show the field has no way to have collected it.
+ *
+ * Symmetrical to KAN-65's treatment of `core.email`, in the opposite direction:
+ * there the fix was to stop the server INVENTING a value from the session, here
+ * it is to stop the server ACCEPTING one the form never requested. Both end at
+ * the same rule — `participants` only holds what the published form asked for.
+ *
+ * Pass `null`/`undefined` for a contest with no published schema: with no
+ * schema there is no "hidden", so the body passes through untouched.
+ */
+export function stripHiddenCoreValues<T extends CoreFieldValues>(
+  values: T,
+  hiddenColumns: readonly CoreFieldColumn[] | null | undefined,
+): T {
+  if (!hiddenColumns || hiddenColumns.length === 0) return { ...values }
+  const out: CoreFieldValues = { ...values }
+  for (const column of hiddenColumns) out[column] = null
+  return out as T
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
