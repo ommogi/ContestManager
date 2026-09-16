@@ -10,9 +10,16 @@ import {
   prepareFormSubmission,
   readPendingFormResponses,
   refreshPendingFormResponses,
+  resolveHiddenCoreColumns,
   stashPendingFormResponses,
+  stripHiddenCoreValues,
   type FormResponsesAdmin,
 } from './inscription-form-responses'
+import {
+  CORE_FIELD_DEFINITIONS,
+  coreFieldDefinition,
+  type CoreFieldId,
+} from '../../shared/inscription-form-core'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -33,6 +40,30 @@ function textField(overrides: Partial<FormField> = {}): FormField {
     validation: { required: true },
     ...overrides,
   } as FormField
+}
+
+/**
+ * A core entry as the builder saves it. Defaults come from the catalogue, so a
+ * test only states the thing it is testing — usually `hidden`.
+ */
+function coreField(id: CoreFieldId, overrides: Partial<FormField> = {}): FormField {
+  const definition = coreFieldDefinition(id)!
+  return {
+    id,
+    type: definition.type,
+    label: definition.label,
+    required: definition.defaultRequired,
+    order: definition.order,
+    hidden: false,
+    isCore: true,
+    validation: { required: definition.defaultRequired },
+    ...overrides,
+  } as FormField
+}
+
+/** The seven core entries, i.e. a schema that has opted into the core model. */
+function allCoreFields(overrides: Partial<Record<CoreFieldId, Partial<FormField>>> = {}): FormField[] {
+  return CORE_FIELD_DEFINITIONS.map(d => coreField(d.id, overrides[d.id] ?? {}))
 }
 
 /**
@@ -190,7 +221,15 @@ describe('prepareFormSubmission', () => {
       form_schema_id: SCHEMA_ID,
       responses: { bio: 'hola', injected: 'no debería guardarse' },
     })
-    expect(submission).toEqual({ contestId: CONTEST_ID, formSchemaId: SCHEMA_ID, responses: { bio: 'hola' } })
+    // `hiddenCoreColumns` is empty because this schema declares no core entry
+    // at all — the legacy, custom-only shape, which renders the full default
+    // core block and therefore hides nothing (KAN-70).
+    expect(submission).toEqual({
+      contestId: CONTEST_ID,
+      formSchemaId: SCHEMA_ID,
+      responses: { bio: 'hola' },
+      hiddenCoreColumns: [],
+    })
   })
 
   it('accepts a 5.000-character textarea', async () => {
@@ -528,5 +567,129 @@ describe('confirmInscriptionUploads', () => {
       participantId: 'part-1',
       paths: [],
     })).resolves.toBe(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hidden core fields (KAN-70)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('resolveHiddenCoreColumns', () => {
+  it('reports the columns of the core fields the form hides', () => {
+    const fields = allCoreFields({
+      'core.dni': { hidden: true, required: false },
+      'core.phone': { hidden: true, required: false },
+    })
+    expect(resolveHiddenCoreColumns(fields).sort()).toEqual(['dni', 'phone'])
+  })
+
+  it('reports nothing when every core field is shown', () => {
+    expect(resolveHiddenCoreColumns(allCoreFields())).toEqual([])
+  })
+
+  it('treats a core entry the schema omits as hidden', () => {
+    // Dropping a field in the builder is how an organization stops asking for
+    // it; `reconcileFormFields` stores that as an explicitly hidden entry.
+    const fields = allCoreFields().filter(f => f.id !== 'core.country')
+    expect(resolveHiddenCoreColumns(fields)).toEqual(['country'])
+  })
+
+  it('never reports an irreducible field, even when the row claims it is hidden', () => {
+    // A hand-edited or pre-KAN-65 schema row can carry `hidden: true` on a
+    // field that may not be hidden. Name, surname, birthdate and email are
+    // always asked for, so their values are never dropped.
+    const fields = allCoreFields({
+      'core.first_name': { hidden: true },
+      'core.last_name': { hidden: true },
+      'core.birthdate': { hidden: true },
+      'core.email': { hidden: true },
+      'core.dni': { hidden: true, required: false },
+    })
+    expect(resolveHiddenCoreColumns(fields)).toEqual(['dni'])
+  })
+
+  it('reports nothing for a legacy schema that declares no core entry', () => {
+    // These render the default core block, so they ask for everything. This is
+    // the shape the contests in production carry and their behaviour must not
+    // change.
+    expect(resolveHiddenCoreColumns([textField()])).toEqual([])
+  })
+
+  it('reports nothing when there is no schema at all', () => {
+    expect(resolveHiddenCoreColumns(null)).toEqual([])
+    expect(resolveHiddenCoreColumns(undefined)).toEqual([])
+    expect(resolveHiddenCoreColumns([])).toEqual([])
+  })
+})
+
+describe('stripHiddenCoreValues', () => {
+  const body = { dni: '12345678Z', country: 'ES', phone: '+34600112233' }
+
+  it('nulls a hidden field that arrived with a value', () => {
+    // The hole this closes: a handcrafted body carrying a DNI for a contest
+    // whose published form hides the DNI.
+    expect(stripHiddenCoreValues(body, ['dni'])).toEqual({
+      dni: null,
+      country: 'ES',
+      phone: '+34600112233',
+    })
+  })
+
+  it('keeps the value of a field the form shows', () => {
+    expect(stripHiddenCoreValues(body, ['phone'])).toEqual({
+      dni: '12345678Z',
+      country: 'ES',
+      phone: null,
+    })
+  })
+
+  it('changes nothing when the contest has no published schema', () => {
+    // `prepareFormSubmission` returns null there, so the handlers pass
+    // `undefined` — no schema means no notion of "hidden".
+    expect(stripHiddenCoreValues(body, undefined)).toEqual(body)
+    expect(stripHiddenCoreValues(body, null)).toEqual(body)
+    expect(stripHiddenCoreValues(body, [])).toEqual(body)
+  })
+
+  it('never touches an irreducible column', () => {
+    const full = { first_name: 'Ada', last_name: 'Lovelace', email: 'ada@example.com', dni: '12345678Z' }
+    expect(stripHiddenCoreValues(full, ['dni'])).toEqual({
+      first_name: 'Ada',
+      last_name: 'Lovelace',
+      email: 'ada@example.com',
+      dni: null,
+    })
+  })
+
+  it('does not mutate the values it was given', () => {
+    const original = { ...body }
+    stripHiddenCoreValues(original, ['dni', 'country', 'phone'])
+    expect(original).toEqual(body)
+  })
+})
+
+describe('prepareFormSubmission · hidden core fields', () => {
+  it('hands the hidden columns back with the validated answers', () => {
+    // End to end through the loader: this is what the enrolment handlers read,
+    // and it costs no second read of the schema.
+    const fields = [
+      ...allCoreFields({ 'core.dni': { hidden: true, required: false } }),
+      textField({ order: 7 }),
+    ]
+    const client = rpcClient({ schemaRow: publishedRow(fields) })
+    return expect(
+      prepareFormSubmission(client, 'tok', { form_schema_id: SCHEMA_ID, responses: { bio: 'hola' } }),
+    ).resolves.toMatchObject({ hiddenCoreColumns: ['dni'], responses: { bio: 'hola' } })
+  })
+
+  it('does not validate core ids as answers', () => {
+    // Core values travel in their own body keys, never in `responses`. A
+    // hidden core field must not turn into a per-field 400 either.
+    const client = rpcClient({
+      schemaRow: publishedRow(allCoreFields({ 'core.phone': { hidden: true, required: false } })),
+    })
+    return expect(
+      prepareFormSubmission(client, 'tok', { form_schema_id: SCHEMA_ID }),
+    ).resolves.toMatchObject({ hiddenCoreColumns: ['phone'], responses: {} })
   })
 })

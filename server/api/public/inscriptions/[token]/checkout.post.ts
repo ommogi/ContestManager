@@ -8,6 +8,7 @@ import {
   prepareFormSubmission,
   refreshPendingFormResponses,
   stashPendingFormResponses,
+  stripHiddenCoreValues,
 } from '~~/server/utils/inscription-form-responses'
 
 export default defineEventHandler(async (event) => {
@@ -21,7 +22,9 @@ export default defineEventHandler(async (event) => {
   if (!parsed.success) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
-  const { category_id, first_name, last_name, birthdate, dni, country, email, phone } = parsed.data
+  // dni/country/phone are destructured further down, once the published schema
+  // says whether this contest asks for them at all (KAN-70).
+  const { category_id, first_name, last_name, birthdate, email } = parsed.data
 
   const admin = serverSupabaseAdmin()
 
@@ -66,6 +69,27 @@ export default defineEventHandler(async (event) => {
   // Validate the configurable form before Stripe is involved at all (KAN-49):
   // a body that fails the schema must not leave a Checkout Session behind.
   const submission = await prepareFormSubmission(admin, token, parsed.data)
+
+  // Drop the core values this contest's form does not ask for (KAN-70), before
+  // they are written anywhere — which on this path means before they reach the
+  // Checkout Session's `metadata`.
+  //
+  // That ordering is the whole reason the webhook needs no change: `metadata`
+  // is the only channel by which these values cross into `handleEnrollment`,
+  // and a hidden one now leaves here as `null`, so the `dni ?? ''` below writes
+  // an empty string and the webhook's `m.dni || null` turns it back into null
+  // for `enroll_participant_paid`. Same mechanism KAN-65 used for the email.
+  //
+  // `submission` is null when the contest has no published form, and then
+  // nothing is stripped — those contests keep behaving exactly as before.
+  const { dni, country, phone } = stripHiddenCoreValues(
+    {
+      dni: parsed.data.dni ?? null,
+      country: parsed.data.country ?? null,
+      phone: parsed.data.phone ?? null,
+    },
+    submission?.hiddenCoreColumns,
+  )
 
   // Ownership of every referenced object key, before Stripe is touched, for
   // the same reason as on the free path (KAN-49). The files themselves are
