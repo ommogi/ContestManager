@@ -1,5 +1,9 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner } from '~~/server/utils/supabase'
+import {
+  collectUploadPathsToPurge,
+  removeUploadObjects,
+} from '~~/server/services/inscription-upload-purge'
 
 export default defineEventHandler(async (event) => {
   const { org } = await requireOrgOwner(event)
@@ -20,7 +24,49 @@ export default defineEventHandler(async (event) => {
   const { data: row } = await q.maybeSingle()
   if (!row) throw createError({ statusCode: 404, statusMessage: 'contest_not_found' })
 
-  const { error } = await client.from('contests').delete().eq('id', (row as any).id)
+  const contestId = (row as any).id as string
+
+  // ── Uploaded files ─────────────────────────────────────────────────────────
+  //
+  // `inscription_uploads.contest_id` is ON DELETE CASCADE, so the delete below
+  // takes the ledger rows with it and leaves the Storage objects with nothing
+  // pointing at them. Unlike a deleted participant — whose row survives the
+  // delete and gets stamped `purge_after` by a trigger — nothing could ever find
+  // these again, so the keys are read while they still exist.
+  //
+  // Read failures are fatal on purpose: the alternative is deleting the contest
+  // and leaking its files with no record that they were ever there.
+  let paths: string[] = []
+  try {
+    paths = await collectUploadPathsToPurge(client, { contestIds: [contestId] })
+  } catch (e) {
+    console.error('[contests.delete] could not read upload paths:', (e as Error)?.message)
+    throw createError({ statusCode: 500, statusMessage: 'internal_error' })
+  }
+
+  const { error } = await client.from('contests').delete().eq('id', contestId)
   if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
+
+  // Objects after the row, never before: a crash in between leaks storage, which
+  // is what happened anyway until now. The other order would destroy the files
+  // of a contest that still exists.
+  //
+  // Best-effort, and loud. The contest is gone; answering 500 because its
+  // cleanup stumbled would describe the wrong thing. The log carries the keys so
+  // whatever is left can be removed by hand.
+  if (paths.length > 0) {
+    const { removed, failures } = await removeUploadObjects(client, paths)
+    for (const failure of failures) {
+      console.error(
+        `[contests.delete] ${failure.paths.length} object(s) left in the bucket for ` +
+        `contest ${contestId}: ${failure.message}`,
+        failure.paths,
+      )
+    }
+    if (removed > 0) {
+      console.info(`[contests.delete] removed ${removed} upload(s) for contest ${contestId}`)
+    }
+  }
+
   return { success: true }
 })
