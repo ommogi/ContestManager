@@ -1,10 +1,24 @@
 -- 0028_notifications_advanced.sql
+-- REPAIRED before applying (2026-09-17). The four trigger functions below were
+-- SECURITY DEFINER with no `SET search_path`, which rule 5 of docs/database.md
+-- forbids for exactly one reason: a SECURITY DEFINER function runs with the
+-- owner's rights, so an unpinned search_path lets anyone who can create objects
+-- in a schema on that path shadow a name the body resolves and have it executed
+-- as the owner. They now pin `public, pg_temp`, matching 0038 and 0040.
+--
+-- Nothing else changed. Verified against production before applying: the
+-- `notifications` table exists, its columns cover the INSERT
+-- (user_id, type, title, body, payload), and there is NO CHECK constraint on
+-- `notifications.type` that would reject the new values — which is the trap
+-- 0032 had and this one does not.
+
+-- 0028_notifications_advanced.sql
 -- In-app notification triggers for: schedule assigned, promoted/not_promoted,
 -- contest started, ranking published.
 
 -- ─── 1. Schedule assigned (performance_time or rehearsal_time first set) ─────
 CREATE OR REPLACE FUNCTION public.notify_schedule_assigned()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_user_id      UUID;
   v_round_name   TEXT;
@@ -73,7 +87,7 @@ CREATE TRIGGER trg_notify_schedule_assigned
 
 -- ─── 2. Promoted / Not promoted (is_qualified changes) ────────────────────────
 CREATE OR REPLACE FUNCTION public.notify_qualified()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_user_id      UUID;
   v_round_name   TEXT;
@@ -137,7 +151,7 @@ CREATE TRIGGER trg_notify_qualified
 
 -- ─── 3. Contest started (status → 'active') ───────────────────────────────────
 CREATE OR REPLACE FUNCTION public.notify_contest_started()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
   IF NEW.status = 'active' AND OLD.status <> 'active' THEN
     INSERT INTO public.notifications (user_id, type, title, body, payload)
@@ -166,7 +180,7 @@ CREATE TRIGGER trg_notify_contest_started
 
 -- ─── 4. Ranking published (is_published → true on a is_ranking round) ─────────
 CREATE OR REPLACE FUNCTION public.notify_ranking_published()
-RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 DECLARE
   v_contest_name  TEXT;
   v_contest_slug  TEXT;
