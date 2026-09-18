@@ -5,7 +5,7 @@
 // draw is complete enough for the schedule generator (KAN-13) to run, and how
 // an imported CSV row is matched to a participant of the round.
 
-/** Upper bound for a single performance, mirrored by the DB CHECK in 0063. */
+/** Upper bound for a single performance, mirrored by the DB CHECK in 0064. */
 export const MAX_PERFORMANCE_MINUTES = 240
 
 export interface DrawEntry {

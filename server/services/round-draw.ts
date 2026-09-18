@@ -1,7 +1,7 @@
 // server/services/round-draw.ts
 // Save a round's draw numbers and performance lengths (KAN-11).
 //
-// The writing is done by the `set_round_draw` RPC (migration 0063) in one
+// The writing is done by the `set_round_draw` RPC (migration 0064) in one
 // statement, so two participants can swap numbers without tripping the
 // per-round unique constraint halfway. This module maps what the RPC raises to
 // the codes the endpoints answer with, and is kept out of the handlers so
