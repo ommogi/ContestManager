@@ -52,6 +52,7 @@ export default defineEventHandler(async (event) => {
       plan: ctx.plan,
       names: ctx.names,
       alreadyScheduled: ctx.alreadyScheduled,
+      manuallyEdited: ctx.manuallyEdited,
       roundClosed: ctx.roundStatus === 'closed',
     }
     if (dryRun) return preview
@@ -68,11 +69,15 @@ export default defineEventHandler(async (event) => {
     }
 
     if (ctx.alreadyScheduled > 0 && !overwrite) {
+      const edited = ctx.manuallyEdited.length
       throw createError({
         statusCode: 409,
         statusMessage: 'schedule_exists',
-        message: `${ctx.alreadyScheduled} participante${ctx.alreadyScheduled === 1 ? ' ya tiene' : 's ya tienen'} hora de actuación. Confirma para sobrescribir.`,
-        data: { alreadyScheduled: ctx.alreadyScheduled },
+        message: edited > 0
+          // KAN-15: hand-made adjustments are named, not just counted with the rest.
+          ? `${edited} turno${edited === 1 ? ' ajustado' : 's ajustados'} a mano se perderá${edited === 1 ? '' : 'n'}. Confirma para sobrescribir.`
+          : `${ctx.alreadyScheduled} participante${ctx.alreadyScheduled === 1 ? ' ya tiene' : 's ya tienen'} hora de actuación. Confirma para sobrescribir.`,
+        data: { alreadyScheduled: ctx.alreadyScheduled, manuallyEdited: ctx.manuallyEdited },
       })
     }
 

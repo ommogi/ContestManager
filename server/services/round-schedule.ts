@@ -14,6 +14,8 @@ export interface ScheduleContext {
   plan: SchedulePlan
   /** How many participants already have a performance time (would be overwritten). */
   alreadyScheduled: number
+  /** round_participants ids whose slot was adjusted by hand (KAN-15); regenerating loses those edits. */
+  manuallyEdited: string[]
   /** Display names by round_participants id, for the preview. */
   names: Record<string, string>
   roundStatus: string
@@ -37,6 +39,7 @@ interface ParticipantRow {
   draw_number: number | null
   performance_minutes: number | null
   performance_time: string | null
+  schedule_edited_at: string | null
   participant: { name: string | null; first_name: string | null; last_name: string | null } | null
 }
 
@@ -93,7 +96,7 @@ export async function loadRoundSchedule(client: SupabaseAdmin, roundId: string):
 
   const { data: rows, error: rowsError } = await client
     .from('round_participants')
-    .select('id, draw_number, performance_minutes, performance_time, participant:participants(name, first_name, last_name)')
+    .select('id, draw_number, performance_minutes, performance_time, schedule_edited_at, participant:participants(name, first_name, last_name)')
     .eq('round_id', roundId)
   if (rowsError) throw new Error(`round_participants.select: ${rowsError.message}`)
   const participants = (rows as unknown as ParticipantRow[] | null) ?? []
@@ -114,6 +117,7 @@ export async function loadRoundSchedule(client: SupabaseAdmin, roundId: string):
   return {
     plan,
     alreadyScheduled: participants.filter(p => !!p.performance_time).length,
+    manuallyEdited: participants.filter(p => !!p.schedule_edited_at).map(p => p.id),
     names: Object.fromEntries(participants.map(p => [p.id, displayName(p.participant)])),
     roundStatus: r.status,
   }
