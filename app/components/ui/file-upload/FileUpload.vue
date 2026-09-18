@@ -3,6 +3,10 @@ import { ref, computed, watch } from 'vue'
 import { Upload, X, Image, Loader2 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils'
+import { objectPathFromPublicUrl } from '~~/shared/storage-path'
+
+/** Every object this component writes lives here. */
+const BUCKET = 'org_logos'
 
 interface Props {
   modelValue?: string | null
@@ -15,7 +19,10 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: null,
-  accept: 'image/png,image/jpeg,image/svg+xml',
+  // No SVG: an SVG is a document that can carry script and these objects are
+  // served from a public URL. `allowed_mime_types` on the bucket says the same
+  // thing (0059), so offering it here would only produce a rejected upload.
+  accept: 'image/png,image/jpeg,image/webp',
   maxSizeMB: 5,
   disabled: false,
   placeholder: 'Arrastra una imagen o haz clic para subir',
@@ -77,27 +84,54 @@ async function handleFile(file: File) {
   try {
     const nuxtApp = useNuxtApp()
     const supabase = nuxtApp.$supabase as any
-    
-    // Upload to storage
+
+    // The object goes in the uploader's own folder, which is what the bucket's
+    // policies check (0059). It used to be `onboarding/<timestamp>-<random>`,
+    // outside anyone's namespace, so the policy meant to let an owner manage
+    // their logo could never match and nothing could ever be deleted.
+    //
+    // Namespaced by user and not by organization on purpose: this runs during
+    // onboarding, before the organization row exists, so there is no
+    // organization id to use yet.
+    const { data: auth } = await supabase.auth.getUser()
+    const userId = auth?.user?.id
+    if (!userId) throw new Error('Debes iniciar sesión para subir una imagen.')
+
+    // The previous object, resolved before the new one replaces it in the model.
+    const previousPath = objectPathFromPublicUrl(props.modelValue, BUCKET)
+
     const ext = file.name.split('.').pop() || 'png'
-    const path = `onboarding/${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`
-    
+    const path = `${userId}/${crypto.randomUUID()}.${ext}`
+
     const { error: uploadError } = await supabase.storage
-      .from('org_logos')
+      .from(BUCKET)
       .upload(path, file, { upsert: true, contentType: file.type })
-    
+
     if (uploadError) throw uploadError
-    
+
     // Get public URL
     const { data: urlData } = supabase.storage
-      .from('org_logos')
+      .from(BUCKET)
       .getPublicUrl(path)
-    
+
     const publicUrl = urlData.publicUrl
-    
+
     // Update parent
     emit('update:modelValue', publicUrl)
     emit('upload:complete', publicUrl)
+
+    // Drop the one it replaced. After the new URL is published, and never
+    // before: a failure here costs one stale object, while the other order
+    // would delete the logo the page is still showing. Best-effort by design —
+    // the upload succeeded, so surfacing a cleanup error would report the wrong
+    // outcome. Guarded on a different path so re-uploading cannot delete what
+    // was just written.
+    if (previousPath && previousPath !== path) {
+      const { error: removeError } = await supabase.storage.from(BUCKET).remove([previousPath])
+      if (removeError) {
+        console.warn(`[file-upload] previous object left behind: ${previousPath}`, removeError.message)
+      }
+    }
   } catch (error: any) {
     console.error('Upload error:', error)
     errorMessage.value = error?.message || 'Error al subir la imagen'
