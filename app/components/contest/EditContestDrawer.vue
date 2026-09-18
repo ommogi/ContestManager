@@ -59,6 +59,9 @@ const lockReason = computed(() =>
 const drawerRange = ref<DateRange | null>(null)
 const uploadingCover = ref(false)
 
+/** Contest covers and the shared brand assets live here. */
+const BUCKET = 'contest-assets'
+
 async function handleCoverChange(e: Event) {
   const inputEl = e.target as HTMLInputElement
   const file = inputEl.files?.[0]
@@ -71,17 +74,26 @@ async function handleCoverChange(e: Event) {
   try {
     const nuxtApp = useNuxtApp()
     const supabase = nuxtApp.$supabase as any
+    // `covers/<contest_id>/<uuid>.<ext>`, with the contest as its own folder.
+    // It used to be `covers/<contest_id>-<timestamp>.<ext>` — the id inside the
+    // file name — which no storage policy can read, so the bucket had to allow
+    // any authenticated user to write anywhere (0060).
     const ext = file.name.split('.').pop()
-    const path = `covers/${props.contest.id}-${Date.now()}.${ext}`
+    const path = `covers/${props.contest.id}/${crypto.randomUUID()}.${ext}`
 
     const { error: upErr } = await supabase.storage
-      .from('contest-assets')
+      .from(BUCKET)
       .upload(path, file, { upsert: true, contentType: file.type })
     if (upErr) throw upErr
 
-    const { data: urlData } = supabase.storage.from('contest-assets').getPublicUrl(path)
+    const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path)
     editForm.value.cover_image_url = urlData.publicUrl
     toast.success('Imagen subida')
+
+    // TODO: delete the cover this replaces. Deliberately not here — the helper
+    // that turns a public URL back into an object path lives in PR #23, and
+    // stacking branches is how work got lost once before. Harmless to defer:
+    // the bucket holds no covers at all today, so there is nothing leaking yet.
   } catch (err: any) {
     toast.error(err?.message ?? 'Error al subir imagen')
     editForm.value.cover_image_url = props.contest.cover_image_url || ''
