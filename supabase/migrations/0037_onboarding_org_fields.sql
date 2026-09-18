@@ -6,9 +6,18 @@
 -- Every policy below is now DROP-then-CREATE, which is re-runnable.
 -- What production is still missing is applied by 0055.
 
--- 0033_onboarding_org_fields.sql
+-- 0037_onboarding_org_fields.sql
 -- Add contact fields to organizations for onboarding
 -- Add storage bucket for organization logos
+--
+-- ⚠️ KNOWN MISMATCH, left as-is on purpose (2026-09-17). The owner policy below
+-- matches objects whose name starts with the organization id, but the app
+-- uploads to `onboarding/<timestamp>-<random>.<ext>` — no org prefix — so it
+-- can never match. It is harmless today because every upload writes a fresh
+-- random path, making it an INSERT (covered by the policy above) and never an
+-- UPDATE. Fixing it properly means deciding a path convention and changing
+-- FileUpload.vue, which is a separate piece of work, not a migration repair.
+-- The consequence meanwhile: nothing ever deletes a replaced logo.
 
 -- ────────────────────────────────────────────────────────────
 -- 1. Add contact fields to organizations table
@@ -37,12 +46,20 @@ CREATE POLICY "org_logos: authenticated upload"
   TO authenticated
   WITH CHECK (bucket_id = 'org_logos');
 
--- Allow public read (for displaying logos)
+-- NO public SELECT policy here, deliberately (repaired 2026-09-17).
+--
+-- 0020_storage_no_listing.sql dropped the broad SELECT policies on public
+-- buckets and said why: "Public buckets serve object URLs directly via the CDN;
+-- a SELECT policy on storage.objects only grants list-objects rights, exposing
+-- file inventories." This file was written before that decision and carried the
+-- policy it retired, so applying it as-is would have reintroduced the problem
+-- for a new bucket.
+--
+-- Nothing breaks without it: the bucket is public and the app reads logos with
+-- `getPublicUrl()` (app/components/ui/file-upload/FileUpload.vue:91), which the
+-- CDN serves without consulting these policies. No code lists the bucket.
+-- The DROP stays so the policy disappears anywhere it was already created.
 DROP POLICY IF EXISTS "org_logos: public read" ON storage.objects;
-CREATE POLICY "org_logos: public read"
-  ON storage.objects FOR SELECT
-  TO public
-  USING (bucket_id = 'org_logos');
 
 -- Allow org owners to update/delete their own logos
 DROP POLICY IF EXISTS "org_logos: owner update/delete" ON storage.objects;

@@ -119,12 +119,20 @@ CREATE TRIGGER set_judge_pool_invitation_expiry_trigger
 -- The window counts from when the invitation was sent, not from now, because
 -- backdating is the honest reading: the token has been in the wild since then.
 --
--- ⚠️ Effect on production, measured on 2026-09-14: `contest_members` holds one
--- pending invitation, sent on 2026-09-05. Fourteen days from then is already
--- past, so applying this **expires it**, and whoever it was for will need it
--- resent. `judge_pool_invitations` has no pending rows, so nothing there
--- changes. That is the correct outcome for a link that has been unanswered for
--- over a week, but it is a real consequence and not a silent one.
+-- ⚠️ Effect on production. CORRECTED on 2026-09-17: the note that used to sit
+-- here said the one pending invitation was "already past" its fourteen days and
+-- that applying this would expire it. The arithmetic was simply wrong —
+-- 2026-09-05 + 14 days is 2026-09-19 — and the claim was repeated downstream,
+-- into KAN-40 and two plans, by people (me included) who read it instead of
+-- subtracting.
+--
+-- Measured again on 2026-09-17: `contest_members` holds one pending invitation,
+-- sent 2026-09-05, so the backfill gives it an expiry of 2026-09-19 — still in
+-- the future. `judge_pool_invitations` has no pending rows.
+--
+-- What is real is a deadline: applied BEFORE 2026-09-19 the invitation keeps
+-- the rest of its window; applied on or after, it is born expired and has to be
+-- resent. Applied 2026-09-17, inside the window.
 UPDATE public.contest_members
    SET invitation_expires_at = COALESCE(invited_at, created_at) + INTERVAL '14 days'
  WHERE invitation_token IS NOT NULL
