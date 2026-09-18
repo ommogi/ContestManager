@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { validateCoreFields } from '../../shared/inscription-form-core'
 import type { FormField } from '../../shared/inscription-form'
+import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
@@ -114,6 +115,48 @@ export const RefundBodySchema = z.object({
 
 export const BulkRoundParticipantsSchema = z.object({
   participantIds: z.array(uuidString).min(1).max(500),
+})
+
+const drawNumber = z.number().int().positive().nullable()
+const performanceMinutes = z.number().int().min(1).max(MAX_PERFORMANCE_MINUTES).nullable()
+
+/**
+ * A round's draw and performance lengths (KAN-11). Duplicate draw numbers are
+ * rejected here for a clear 400, and again by the database's unique constraint,
+ * which is the authority once rows the body does not mention are counted.
+ */
+export const RoundDrawSchema = z.object({
+  rows: z.array(z.object({
+    id: uuidString,
+    draw_number: drawNumber,
+    performance_minutes: performanceMinutes,
+  })).min(1).max(500),
+}).refine(
+  ({ rows }) => {
+    const numbers = rows.map(r => r.draw_number).filter((n): n is number => n !== null)
+    return new Set(numbers).size === numbers.length
+  },
+  { message: 'duplicate_draw_number', path: ['rows'] },
+).refine(
+  ({ rows }) => new Set(rows.map(r => r.id)).size === rows.length,
+  { message: 'duplicate_row_id', path: ['rows'] },
+)
+
+/**
+ * Rows of a draw CSV, parsed in the browser by `parseDrawCsv`. Matching to
+ * participants happens on the server, which is the side that can read DNI and
+ * e-mail without sending them to the page.
+ */
+export const RoundDrawImportSchema = z.object({
+  rows: z.array(z.object({
+    line: z.number().int().positive(),
+    dni: z.string().max(40).nullable(),
+    email: z.string().max(320).nullable(),
+    draw_number: drawNumber,
+    performance_minutes: performanceMinutes,
+  })).min(1).max(500),
+  /** false = only report what would match; true = also save it. */
+  apply: z.boolean().default(false),
 })
 
 export const JudgePoolSchema = z.object({

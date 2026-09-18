@@ -32,6 +32,8 @@ export default defineEventHandler(async (event) => {
       participant:participants(${participantFields})
     `)
     .eq('round_id', roundId)
+    // Draw first once there is one (KAN-11); undrawn rows keep insertion order.
+    .order('draw_number', { ascending: true, nullsFirst: false })
     .order('order', { ascending: true })
 
   if (error) {

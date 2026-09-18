@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/number-field'
 import {
   ArrowLeft, Users, Search, Trophy, Layers, Play, Activity, Swords, Sparkles, ClipboardCheck,
-  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, CalendarClock
+  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, ListOrdered, CalendarClock
 } from 'lucide-vue-next'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
@@ -31,6 +31,10 @@ import { storeToRefs } from 'pinia'
 import { toast } from 'vue-sonner'
 import { getStatusClasses } from '@/utils/styles'
 import { useRoundsStore } from '@/stores/rounds'
+import { useRoundParticipantsStore } from '@/stores/round-participants'
+import RoundDrawDialog, { type DrawParticipantRow } from '@/components/round/RoundDrawDialog.vue'
+import { drawReadiness } from '~~/shared/round-draw'
+
 import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
 import { toHHMM } from '~~/shared/session-window'
 
@@ -919,6 +923,26 @@ const saveActuaciones = async () => {
   }
 }
 
+// ── Draw & performance length (KAN-11) ──────────────────────────────────────
+const isDrawOpen = ref(false)
+
+const drawRows = computed<DrawParticipantRow[]>(() => currentRoundParticipants.value.map((rp: any) => ({
+  id: rp.id,
+  name: displayName(rp.participant, rp.participant_id),
+  draw_number: rp.draw_number ?? null,
+  performance_minutes: rp.performance_minutes ?? null,
+})))
+
+// The schedule generator (KAN-13) is gated on this; until then it is a warning.
+const roundDrawReadiness = computed(() => drawReadiness(drawRows.value))
+
+const roundParticipantsStore = useRoundParticipantsStore()
+const onDrawSaved = async () => {
+  // The store caches per round; without invalidating, the saved draw would not show.
+  roundParticipantsStore.invalidate(roundId)
+  await contestStore.fetchRoundParticipants(roundId)
+}
+
 // ── Session window (KAN-12) ──────────────────────────────────────────────────
 const isSessionOpen = ref(false)
 
@@ -1168,6 +1192,24 @@ function statusLabel(status: string) {
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">
+        <!-- Draw can be set before the round starts, never once it is closed -->
+        <Button
+          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
+          variant="outline"
+          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+          @click="isDrawOpen = true"
+        >
+          <ListOrdered class="w-3.5 h-3.5" /> Sorteo
+        </Button>
+        <span
+          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView && drawRows.length > 0 && !roundDrawReadiness.ready"
+          class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400"
+          role="status"
+        >
+          <AlertCircle class="w-3.5 h-3.5" />
+          {{ roundDrawReadiness.missing.length ? `${roundDrawReadiness.missing.length} sin sorteo` : 'Sorteo con repetidos' }}
+        </span>
+
         <!-- Session window can be set before the round starts, never once it is closed -->
         <Button
           v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
@@ -2288,6 +2330,15 @@ function statusLabel(status: string) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <!-- ── Draw dialog (KAN-11) ────────────────────────────────────────────────── -->
+    <RoundDrawDialog
+      v-model:open="isDrawOpen"
+      :round-id="roundId"
+      :rows="drawRows"
+      :default-minutes="(currentContest as any)?.performance_default_minutes ?? null"
+      @saved="onDrawSaved"
+    />
 
     <!-- ── Session window dialog (KAN-12) ─────────────────────────────────────── -->
     <RoundSessionDialog
