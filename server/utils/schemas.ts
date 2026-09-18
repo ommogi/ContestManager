@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { validateCoreFields } from '../../shared/inscription-form-core'
 import type { FormField } from '../../shared/inscription-form'
 import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
+import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
@@ -11,6 +12,7 @@ import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 // to match what the database actually accepts.
 export const uuidString = z.guid()
 export const isoDateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD')
+export const timeOfDayString = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected HH:MM')
 export const emailString = z.string().email()
 export const phoneString = z.string().regex(/^\+\d{7,15}$/).nullable().optional()
 export const dniString = z.string().min(8).max(20).nullable().optional()
@@ -189,6 +191,8 @@ export const ContestPatchSchema = z.object({
   rules: z.string().max(10000).nullable().optional(),
   entry_fee_cents: z.number().int().min(0).nullable().optional(),
   registration_open: z.boolean().optional(),
+  /** Minutes before their performance a participant is called (KAN-12). */
+  call_offset_minutes: z.number().int().min(0).max(MAX_CALL_OFFSET_MINUTES).nullable().optional(),
 })
 
 export const ParticipantPatchSchema = z.object({
@@ -260,7 +264,15 @@ export const RoundPatchSchema = z.object({
   is_published: z.boolean().optional(),
   started_at: z.string().nullable().optional(),
   closed_at: z.string().nullable().optional(),
-})
+  // Session window (KAN-12). Only checked here when both ends come in the same
+  // request; the endpoint checks a lone end against the stored one.
+  session_date: isoDateString.nullable().optional(),
+  session_start: timeOfDayString.nullable().optional(),
+  session_end: timeOfDayString.nullable().optional(),
+}).refine(
+  body => validateSessionWindow(body.session_start, body.session_end) === null,
+  { message: 'end_not_after_start', path: ['session_end'] },
+)
 
 export const RoundCreateSchema = z.object({
   name: z.string().min(1).max(200),

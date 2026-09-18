@@ -1,4 +1,4 @@
--- 0064_round_participant_draw.sql
+-- 0066_round_participant_draw.sql
 -- Draw number and performance length per participant and round (KAN-11).
 --
 -- ── Why not reuse `order` ───────────────────────────────────────────────────
