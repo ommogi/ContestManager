@@ -142,6 +142,12 @@ export const RoundDrawSchema = z.object({
   { message: 'duplicate_row_id', path: ['rows'] },
 )
 
+/** Generate a round's schedule (KAN-13). A dry run is the safe default. */
+export const RoundScheduleGenerateSchema = z.object({
+  dryRun: z.boolean().default(true),
+  overwrite: z.boolean().default(false),
+})
+
 /**
  * Rows of a draw CSV, parsed in the browser by `parseDrawCsv`. Matching to
  * participants happens on the server, which is the side that can read DNI and

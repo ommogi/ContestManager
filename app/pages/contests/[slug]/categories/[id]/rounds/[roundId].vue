@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/number-field'
 import {
   ArrowLeft, Users, Search, Trophy, Layers, Play, Activity, Swords, Sparkles, ClipboardCheck,
-  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, ListOrdered, CalendarClock
+  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, ListOrdered, CalendarClock, Wand2
 } from 'lucide-vue-next'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
@@ -36,6 +36,7 @@ import RoundDrawDialog, { type DrawParticipantRow } from '@/components/round/Rou
 import { drawReadiness } from '~~/shared/round-draw'
 
 import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
+import RoundScheduleDialog from '@/components/round/RoundScheduleDialog.vue'
 import { toHHMM } from '~~/shared/session-window'
 
 const route = useRoute()
@@ -965,6 +966,13 @@ const sessionLabel = computed(() => {
   return [day, hours].filter(Boolean).join(' · ') || null
 })
 
+// ── Schedule generator (KAN-13) ──────────────────────────────────────────────
+const isScheduleOpen = ref(false)
+
+// The generator's preview points at whichever setting is missing.
+const openDrawFromSchedule = () => { isScheduleOpen.value = false; isDrawOpen.value = true }
+const openSessionFromSchedule = () => { isScheduleOpen.value = false; isSessionOpen.value = true }
+
 // ── PDF Generation ────────────────────────────────────────────────────────────
 const isPdfOpen = ref(false)
 const pdfType = ref<'ensayos' | 'actuaciones'>('ensayos')
@@ -1218,6 +1226,14 @@ function statusLabel(status: string) {
           @click="isSessionOpen = true"
         >
           <CalendarClock class="w-3.5 h-3.5" /> Jornada
+        </Button>
+        <Button
+          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
+          variant="outline"
+          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/30"
+          @click="isScheduleOpen = true"
+        >
+          <Wand2 class="w-3.5 h-3.5" /> Generar turnos
         </Button>
 
         <!-- Schedule buttons (only in active round) -->
@@ -2346,6 +2362,15 @@ function statusLabel(status: string) {
       :round-id="roundId"
       :session="roundSession"
       :contest-starts-at="(currentContest as any)?.starts_at ?? null"
+    />
+
+    <!-- ── Schedule generator dialog (KAN-13) ───────────────────────────────── -->
+    <RoundScheduleDialog
+      v-model:open="isScheduleOpen"
+      :round-id="roundId"
+      @generated="onDrawSaved"
+      @open-draw="openDrawFromSchedule"
+      @open-session="openSessionFromSchedule"
     />
 
     <!-- ── Actuaciones dialog ─────────────────────────────────────────────────── -->
