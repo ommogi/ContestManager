@@ -37,7 +37,7 @@ export const PATH_PAGE_SIZE = 500
 
 /**
  * Objects removed per Storage call. Same figure as `PURGE_BATCH_SIZE` in
- * `server/api/maintenance/purge-inscription-uploads.post.ts`, for the same
+ * `./scheduled-upload-purge.ts`, for the same
  * reason: keep each request bounded.
  */
 export const REMOVE_BATCH_SIZE = 200

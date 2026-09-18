@@ -12,10 +12,9 @@
 // ── Why the object goes now instead of being marked ─────────────────────────
 // `purge_after` exists for work nobody is waiting on: a deleted participant, an
 // abandoned checkout. This is neither. It is a signed-in person acting on their
-// own unconfirmed file, and nothing about it needs deferring. It also sidesteps
-// the fact that no scheduler currently calls
-// `/api/maintenance/purge-inscription-uploads`, which would leave a "deleted"
-// file sitting in the bucket forever.
+// own unconfirmed file, and nothing about it needs deferring — waiting up to 15
+// minutes for the scheduled purge (migration 0062) would also keep the object
+// counted against the contest's storage quota in the meantime.
 
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { requireAuth, serverSupabaseAdmin } from '~~/server/utils/supabase'
