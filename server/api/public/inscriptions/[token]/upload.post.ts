@@ -104,6 +104,12 @@ export default defineEventHandler(async (event): Promise<FormFileReference> => {
   // Two counts, one round-trip each, both needed by validateUpload: how many
   // files this user already has on this field, and how much this contest is
   // already storing.
+  //
+  // They filter differently on purpose (KAN-69). A row marked `purge_after` no
+  // longer belongs to the participant, so it does not use up their `maxFiles`.
+  // But its object is still in the bucket until the scheduled purge removes
+  // it, so it does count against the contest's storage quota — otherwise the
+  // quota would loosen by exactly the bytes still sitting there.
   const [countRes, usageRes] = await Promise.all([
     client
       .from('inscription_uploads')
@@ -115,8 +121,7 @@ export default defineEventHandler(async (event): Promise<FormFileReference> => {
     client
       .from('inscription_uploads')
       .select('size_bytes')
-      .eq('contest_id', contest.id)
-      .is('purge_after', null),
+      .eq('contest_id', contest.id),
   ])
 
   if (countRes.error) throw createError({ statusCode: 500, statusMessage: 'upload_count_failed' })

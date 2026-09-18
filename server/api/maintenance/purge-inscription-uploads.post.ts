@@ -1,5 +1,5 @@
 // server/api/maintenance/purge-inscription-uploads.post.ts
-// Delete the Storage objects the database has marked for purge (KAN-59).
+// Delete the Storage objects the database has marked for purge (KAN-59, KAN-69).
 //
 // Storage has no foreign keys and no trigger can reach the object store, so
 // "delete the participant and the files go too" cannot be expressed in SQL.
@@ -13,23 +13,16 @@
 //   * a deleted participant — `participant_form_responses` cascaded away, the
 //     objects did not.
 //
-// ── Why this is not a cron job in this file ─────────────────────────────────
-// The repo has no scheduler and adding one would mean a new dependency, which
-// CLAUDE.md forbids without confirmation. This is an idempotent endpoint meant
-// to be hit on a schedule by whatever the deployment already has (a platform
-// cron, an external pinger). Running it twice is harmless; running it never
-// means orphans accumulate, which is why the sweep is also safe to trigger by
-// hand.
+// ── Who calls it ────────────────────────────────────────────────────────────
+// pg_cron, every 15 minutes, via `invoke_inscription_upload_purge()` from
+// migration 0062 (KAN-69), with the secret read from Vault. The endpoint stays
+// idempotent: running it twice is harmless, and it is still safe to trigger by
+// hand. Each run leaves a row in `maintenance_runs`.
 
 import { defineEventHandler, createError, getHeader, readBody } from 'h3'
 import { serverSupabaseAdmin } from '~~/server/utils/supabase'
-import {
-  INSCRIPTION_UPLOADS_BUCKET,
-  ORPHAN_UPLOAD_TTL_HOURS,
-} from '~~/server/utils/inscription-uploads'
-
-/** How many objects to delete per invocation. Keeps the request bounded. */
-const PURGE_BATCH_SIZE = 200
+import { ORPHAN_UPLOAD_TTL_HOURS } from '~~/server/utils/inscription-uploads'
+import { PurgeRunError, runScheduledPurge } from '~~/server/services/scheduled-upload-purge'
 
 interface PurgeBody {
   /** Skip the orphan sweep and only delete what is already marked. */
@@ -58,55 +51,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody<PurgeBody>(event).catch(() => ({} as PurgeBody))
-  const client = serverSupabaseAdmin()
 
-  let swept = 0
-  if (!body?.skipSweep) {
-    const sweepRes = await client.rpc('sweep_orphan_inscription_uploads', {
-      p_ttl_hours: ORPHAN_UPLOAD_TTL_HOURS,
+  try {
+    return await runScheduledPurge(serverSupabaseAdmin(), {
+      ttlHours: ORPHAN_UPLOAD_TTL_HOURS,
+      skipSweep: body?.skipSweep === true,
     })
-    // The supabase-js mocks resolve with `{ data, error }` and never throw, so
-    // a failed sweep is a checked value. It is not fatal: whatever was already
-    // marked can still be purged below.
-    if (!sweepRes.error) swept = Number(sweepRes.data ?? 0)
-  }
-
-  const { data, error } = await client
-    .from('inscription_uploads')
-    .select('id, path')
-    .not('purge_after', 'is', null)
-    .lte('purge_after', new Date().toISOString())
-    .limit(PURGE_BATCH_SIZE)
-
-  if (error) throw createError({ statusCode: 500, statusMessage: 'purge_lookup_failed' })
-
-  const due = (data as { id: string; path: string }[] | null) ?? []
-  if (due.length === 0) {
-    return { swept, deleted: 0, remaining: 0 }
-  }
-
-  const removeRes = await client.storage
-    .from(INSCRIPTION_UPLOADS_BUCKET)
-    .remove(due.map(row => row.path))
-
-  if (removeRes.error) {
-    throw createError({ statusCode: 500, statusMessage: 'purge_remove_failed' })
-  }
-
-  // Ledger rows go only after the objects are gone. If this delete fails the
-  // rows stay marked and the next run retries — deleting an already-deleted
-  // object is a no-op, so the retry is safe.
-  const { error: deleteError } = await client
-    .from('inscription_uploads')
-    .delete()
-    .in('id', due.map(row => row.id))
-
-  if (deleteError) throw createError({ statusCode: 500, statusMessage: 'purge_cleanup_failed' })
-
-  return {
-    swept,
-    deleted: due.length,
-    // A full batch means there is very likely more; the scheduler can call again.
-    remaining: due.length === PURGE_BATCH_SIZE ? PURGE_BATCH_SIZE : 0,
+  } catch (err) {
+    const code = err instanceof PurgeRunError ? err.code : 'purge_failed'
+    console.error('[maintenance] purge failed', err)
+    throw createError({ statusCode: 500, statusMessage: code })
   }
 })
