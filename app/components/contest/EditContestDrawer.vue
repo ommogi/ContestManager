@@ -30,6 +30,7 @@ import { parseDate } from '@internationalized/date'
 import { type DateRange } from 'reka-ui'
 import { useContestStore } from '@/stores/contest'
 import { toast } from 'vue-sonner'
+import { objectPathFromPublicUrl } from '~~/shared/storage-path'
 
 const props = defineProps<{
   open: boolean
@@ -62,6 +63,37 @@ const uploadingCover = ref(false)
 /** Contest covers and the shared brand assets live here. */
 const BUCKET = 'contest-assets'
 
+/**
+ * Covers uploaded in this drawer that nothing saved points at yet.
+ *
+ * Unlike the logo in `<FileUpload>`, a cover is not persisted when it is
+ * uploaded: it only reaches `contests.cover_image_url` when the drawer is
+ * saved. So an upload is garbage until then — and stays garbage if the drawer
+ * is closed instead of saved. Deleting the replaced object at upload time,
+ * which is what the logo does, would destroy the cover the contest is still
+ * pointing at for anyone who cancels.
+ */
+const unsavedCoverPaths = ref<string[]>([])
+
+const nuxtApp = useNuxtApp()
+
+/**
+ * Best-effort removal. The save already succeeded by the time this runs, so
+ * reporting a cleanup failure would describe the wrong outcome; the path is
+ * logged instead so it can be removed by hand.
+ *
+ * Not awaited by its callers: the request is in flight before this returns, so
+ * closing the drawer cannot cut it short.
+ */
+async function discardCoverObjects(paths: string[]) {
+  if (paths.length === 0) return
+  const supabase = nuxtApp.$supabase as any
+  const { error } = await supabase.storage.from(BUCKET).remove(paths)
+  if (error) {
+    console.warn(`[edit-contest] cover object(s) left behind: ${paths.join(', ')}`, error.message)
+  }
+}
+
 async function handleCoverChange(e: Event) {
   const inputEl = e.target as HTMLInputElement
   const file = inputEl.files?.[0]
@@ -90,10 +122,8 @@ async function handleCoverChange(e: Event) {
     editForm.value.cover_image_url = urlData.publicUrl
     toast.success('Imagen subida')
 
-    // TODO: delete the cover this replaces. Deliberately not here — the helper
-    // that turns a public URL back into an object path lives in PR #23, and
-    // stacking branches is how work got lost once before. Harmless to defer:
-    // the bucket holds no covers at all today, so there is nothing leaking yet.
+    // Nothing points at this object yet — saving or closing decides which.
+    unsavedCoverPaths.value.push(path)
   } catch (err: any) {
     toast.error(err?.message ?? 'Error al subir imagen')
     editForm.value.cover_image_url = props.contest.cover_image_url || ''
@@ -167,6 +197,15 @@ watch(() => props.open, (isOpen) => {
       drawerRange.value = null
     }
   }
+
+  // Closed without saving: the contest still points at the cover it had, so
+  // every object uploaded in this session is orphaned. A successful save clears
+  // the list first, so this only ever fires on a genuine cancel.
+  if (!isOpen) {
+    const garbage = unsavedCoverPaths.value
+    unsavedCoverPaths.value = []
+    void discardCoverObjects(garbage)
+  }
 })
 
 const handleUpdate = async () => {
@@ -209,8 +248,20 @@ const handleUpdate = async () => {
     })
 
     await promise
+
+    // The row now points at whatever was saved, so everything else this drawer
+    // uploaded is garbage — plus the cover that was just replaced. Computed and
+    // cleared before the emits: closing the drawer sweeps the same list, and it
+    // must not find the object the save just made real.
+    const savedPath = objectPathFromPublicUrl(payload.cover_image_url, BUCKET)
+    const replacedPath = objectPathFromPublicUrl(props.contest.cover_image_url, BUCKET)
+    const garbage = new Set(unsavedCoverPaths.value.filter(p => p !== savedPath))
+    if (replacedPath && replacedPath !== savedPath) garbage.add(replacedPath)
+    unsavedCoverPaths.value = []
+
     emit('updated')
     emit('update:open', false)
+    void discardCoverObjects([...garbage])
   } catch (error) {
     console.error('Update failed:', error)
   } finally {
