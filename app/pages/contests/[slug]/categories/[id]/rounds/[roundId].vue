@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/number-field'
 import {
   ArrowLeft, Users, Search, Trophy, Layers, Play, Activity, Swords, Sparkles, ClipboardCheck,
-  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History
+  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, CalendarClock
 } from 'lucide-vue-next'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
@@ -31,6 +31,8 @@ import { storeToRefs } from 'pinia'
 import { toast } from 'vue-sonner'
 import { getStatusClasses } from '@/utils/styles'
 import { useRoundsStore } from '@/stores/rounds'
+import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
+import { toHHMM } from '~~/shared/session-window'
 
 const route = useRoute()
 const router = useRouter()
@@ -917,6 +919,28 @@ const saveActuaciones = async () => {
   }
 }
 
+// ── Session window (KAN-12) ──────────────────────────────────────────────────
+const isSessionOpen = ref(false)
+
+const roundSession = computed(() => ({
+  session_date: (currentRound.value as any)?.session_date ?? null,
+  session_start: (currentRound.value as any)?.session_start ?? null,
+  session_end: (currentRound.value as any)?.session_end ?? null,
+}))
+
+const sessionDateFormatter = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+/** "12 oct · 14:00–18:00", or null when nothing is set. */
+const sessionLabel = computed(() => {
+  const { session_date, session_start, session_end } = roundSession.value
+  // A DATE is a calendar day; read it as UTC so no time zone moves it.
+  const day = session_date ? sessionDateFormatter.format(new Date(`${session_date}T00:00:00Z`)) : null
+  const from = toHHMM(session_start)
+  const to = toHHMM(session_end)
+  const hours = from && to ? `${from}–${to}` : from ? `desde ${from}` : to ? `hasta ${to}` : null
+  return [day, hours].filter(Boolean).join(' · ') || null
+})
+
 // ── PDF Generation ────────────────────────────────────────────────────────────
 const isPdfOpen = ref(false)
 const pdfType = ref<'ensayos' | 'actuaciones'>('ensayos')
@@ -1137,10 +1161,23 @@ function statusLabel(status: string) {
           <p class="text-[10px] font-bold text-zinc-400 uppercase tracking-widest mt-1 flex items-center gap-1.5">
             <Sparkles class="w-3 h-3 text-blue-500"/> Gabinete de Calificaciones Técnica
           </p>
+          <p v-if="sessionLabel" class="text-[10px] font-bold text-sky-700 dark:text-sky-400 uppercase tracking-widest mt-1 flex items-center gap-1.5">
+            <CalendarClock class="w-3 h-3" /> {{ sessionLabel }}
+          </p>
         </div>
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">
+        <!-- Session window can be set before the round starts, never once it is closed -->
+        <Button
+          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
+          variant="outline"
+          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+          @click="isSessionOpen = true"
+        >
+          <CalendarClock class="w-3.5 h-3.5" /> Jornada
+        </Button>
+
         <!-- Schedule buttons (only in active round) -->
         <template v-if="currentRound?.status === 'active'">
           <Button
@@ -2251,6 +2288,14 @@ function statusLabel(status: string) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <!-- ── Session window dialog (KAN-12) ─────────────────────────────────────── -->
+    <RoundSessionDialog
+      v-model:open="isSessionOpen"
+      :round-id="roundId"
+      :session="roundSession"
+      :contest-starts-at="(currentContest as any)?.starts_at ?? null"
+    />
 
     <!-- ── Actuaciones dialog ─────────────────────────────────────────────────── -->
     <Dialog v-model:open="isActuacionesOpen">

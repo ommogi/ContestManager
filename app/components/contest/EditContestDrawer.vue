@@ -25,7 +25,8 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from '@/components/ui/number-field'
-import { Save, Target, Plus, Layers, CalendarRange, Upload, X, Link2, Copy, Check, Euro, Lock } from 'lucide-vue-next'
+import { Save, Target, Plus, Layers, CalendarRange, Upload, X, Link2, Copy, Check, Euro, Lock, AlarmClock } from 'lucide-vue-next'
+import { MAX_CALL_OFFSET_MINUTES } from '~~/shared/session-window'
 import { parseDate } from '@internationalized/date'
 import { type DateRange } from 'reka-ui'
 import { useContestStore } from '@/stores/contest'
@@ -117,6 +118,8 @@ const editForm = ref({
   cover_image_url: '',
   registration_open: true,
   entry_fee_eur: 0,
+  // '' = not using call times; kept as text so an emptied input is not 0.
+  call_offset_minutes: '' as string | number,
 })
 
 const registrationUrl = computed(() => {
@@ -152,6 +155,7 @@ watch(() => props.open, (isOpen) => {
       cover_image_url: props.contest.cover_image_url || '',
       registration_open: props.contest.registration_open !== false,
       entry_fee_eur: (props.contest.entry_fee_cents || 0) / 100,
+      call_offset_minutes: (props.contest as any).call_offset_minutes ?? '',
     }
     
     if (props.contest.starts_at && props.contest.ends_at) {
@@ -176,6 +180,14 @@ const handleUpdate = async () => {
     return
   }
 
+  // Call offset (KAN-12): empty clears it, otherwise a whole number of minutes.
+  const rawOffset = String(editForm.value.call_offset_minutes ?? '').trim()
+  const callOffset = rawOffset === '' ? null : Number(rawOffset)
+  if (callOffset !== null && (!Number.isInteger(callOffset) || callOffset < 0 || callOffset > MAX_CALL_OFFSET_MINUTES)) {
+    toast.error(`La convocatoria debe ser un número de minutos entre 0 y ${MAX_CALL_OFFSET_MINUTES}`)
+    return
+  }
+
   isUpdating.value = true
   try {
     const payload: any = {
@@ -186,6 +198,7 @@ const handleUpdate = async () => {
       cover_image_url: editForm.value.cover_image_url?.trim() || null,
       registration_open: editForm.value.registration_open,
       entry_fee_cents: Math.max(0, Math.round(Number(editForm.value.entry_fee_eur || 0) * 100)),
+      call_offset_minutes: callOffset,
       settings: {
         ...(props.contest.settings as any || {}),
         mode: editForm.value.mode,
@@ -373,6 +386,28 @@ const handleOpenAutoFocus = (e: Event) => {
                     placeholder="0"
                   />
                   <span class="text-xs font-bold text-muted-foreground">€</span>
+                </div>
+              </div>
+
+              <!-- Convocatoria (KAN-12) -->
+              <div class="flex items-center gap-3 pt-2 border-t border-border/60">
+                <AlarmClock class="w-4 h-4 text-zinc-500 shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Convocatoria</p>
+                  <p class="text-[10px] text-muted-foreground">Minutos antes de actuar a los que se cita al participante. Igual para todo el concurso; vacío si no se usa.</p>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Input
+                    v-model="editForm.call_offset_minutes"
+                    type="number"
+                    min="0"
+                    :max="MAX_CALL_OFFSET_MINUTES"
+                    step="5"
+                    aria-label="Minutos de convocatoria antes de actuar"
+                    class="h-9 w-24 text-sm font-mono border-2 text-right"
+                    placeholder="—"
+                  />
+                  <span class="text-xs font-bold text-muted-foreground">min</span>
                 </div>
               </div>
             </div>
