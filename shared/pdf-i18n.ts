@@ -27,6 +27,13 @@ const es = {
   callOffsetNote: 'Convocatoria {minutes} min antes del ensayo',
   noCallOffset: 'Sin convocatoria configurada',
   noRows: 'No hay participantes en esta ronda.',
+  juryProgramTitle: 'Programa del jurado',
+  performanceTime: 'Actuación',
+  drawNumber: 'Nº',
+  repertoire: 'Repertorio',
+  noRepertoire: 'Sin repertorio registrado.',
+  total: 'Total',
+  notes: 'Anotaciones',
 }
 
 export type PdfStrings = typeof es
@@ -46,6 +53,13 @@ const ca: PdfStrings = {
   callOffsetNote: 'Convocatòria {minutes} min abans de l’assaig',
   noCallOffset: 'Sense convocatòria configurada',
   noRows: 'No hi ha participants en aquesta ronda.',
+  juryProgramTitle: 'Programa del jurat',
+  performanceTime: 'Actuació',
+  drawNumber: 'Núm.',
+  repertoire: 'Repertori',
+  noRepertoire: 'Sense repertori registrat.',
+  total: 'Total',
+  notes: 'Anotacions',
 }
 
 export const PDF_STRINGS: Record<PdfLocale, PdfStrings> = { es, ca }

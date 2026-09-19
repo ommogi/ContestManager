@@ -1011,7 +1011,7 @@ const openSessionFromSchedule = () => { isScheduleOpen.value = false; isSessionO
 
 // ── PDF Generation ────────────────────────────────────────────────────────────
 const isPdfOpen = ref(false)
-const pdfType = ref<'ensayos' | 'actuaciones'>('ensayos')
+const pdfType = ref<'ensayos' | 'actuaciones' | 'jurado'>('ensayos')
 const pdfSortBy = ref<'nombre' | 'apellido' | 'hora'>('apellido')
 
 function getLastName(name: string) {
@@ -1038,27 +1038,23 @@ const sortedParticipantsForPdf = computed(() => {
 
 // The rehearsal sheet is generated on the server (KAN-19/KAN-20): organisers
 // only, call time from the contest offset, in the organisation's language.
-const isDownloadingPdf = ref(false)
-const downloadRehearsalPdf = async () => {
-  isDownloadingPdf.value = true
-  try {
-    const blob = await (apiClient as any)(`/api/rounds/${roundId}/pdf/rehearsals`, { responseType: 'blob' }) as Blob
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `ensayos-${(currentRound.value?.name || 'ronda').toLowerCase().replace(/[^a-z0-9]+/gi, '-')}.pdf`
-    link.click()
-    URL.revokeObjectURL(url)
-    isPdfOpen.value = false
-  } catch (e: any) {
-    toast.error(e?.status === 403 ? 'Solo la organización puede descargar este documento' : 'No se ha podido generar el PDF')
-  } finally {
-    isDownloadingPdf.value = false
-  }
+const { isDownloading: isDownloadingPdf, download: downloadServerPdf } = useServerPdf()
+
+// Server-generated documents (KAN-19): rehearsal sheet (KAN-20) and jury
+// programme (KAN-22). Organisers only / organisers and jury, checked there.
+const SERVER_PDFS = {
+  ensayos: { path: 'rehearsals', prefix: 'ensayos' },
+  jurado: { path: 'jury-program', prefix: 'programa-jurado' },
+} as const
+
+const downloadRoundPdf = async (type: keyof typeof SERVER_PDFS) => {
+  const { path, prefix } = SERVER_PDFS[type]
+  const ok = await downloadServerPdf(`/api/rounds/${roundId}/pdf/${path}`, `${prefix}-${pdfSlug(currentRound.value?.name)}.pdf`)
+  if (ok) isPdfOpen.value = false
 }
 
 const generatePdf = async () => {
-  if (pdfType.value === 'ensayos') return downloadRehearsalPdf()
+  if (pdfType.value === 'ensayos' || pdfType.value === 'jurado') return downloadRoundPdf(pdfType.value)
   const { jsPDF } = await import('jspdf')
   const round = currentRound.value
   const contestName = currentContest.value?.name || 'Concurso'
@@ -2532,9 +2528,9 @@ function statusLabel(status: string) {
           <!-- Type -->
           <div class="space-y-2">
             <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Tipo de PDF</p>
-            <div class="grid grid-cols-2 gap-2">
+            <div class="grid grid-cols-3 gap-2">
               <label
-                v-for="opt in [{ value: 'ensayos', label: 'Ensayos', color: 'blue' }, { value: 'actuaciones', label: 'Actuaciones', color: 'emerald' }]"
+                v-for="opt in [{ value: 'ensayos', label: 'Ensayos', color: 'blue' }, { value: 'actuaciones', label: 'Actuaciones', color: 'emerald' }, { value: 'jurado', label: 'Jurado', color: 'blue' }]"
                 :key="opt.value"
                 class="flex items-center gap-2.5 p-3 rounded-xl border-2 cursor-pointer transition-colors"
                 :class="pdfType === opt.value
@@ -2561,12 +2557,15 @@ function statusLabel(status: string) {
             </div>
           </div>
 
+          <p v-if="pdfType === 'jurado'" class="text-xs text-zinc-500">
+            Una página por participante en orden de actuación, con su repertorio, las duraciones y espacio para anotar. También lo puede descargar el jurado desde «Mis concursos».
+          </p>
           <p v-if="pdfType === 'ensayos'" class="text-xs text-zinc-500">
             Ordenado por hora de ensayo, con la convocatoria calculada con el desfase del concurso y en el idioma de la organización.
           </p>
 
           <!-- Sort (browser-generated "Actuaciones" only) -->
-          <div v-if="pdfType !== 'ensayos'" class="space-y-2">
+          <div v-if="pdfType === 'actuaciones'" class="space-y-2">
             <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Ordenar por</p>
             <div class="space-y-1.5">
               <label
