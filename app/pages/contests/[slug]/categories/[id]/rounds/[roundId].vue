@@ -37,6 +37,7 @@ import { drawReadiness } from '~~/shared/round-draw'
 
 import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
 import RoundScheduleDialog from '@/components/round/RoundScheduleDialog.vue'
+import { slotEnd } from '~~/shared/schedule-generator'
 import { toHHMM } from '~~/shared/session-window'
 
 const route = useRoute()
@@ -903,17 +904,37 @@ const openActuaciones = () => {
   isActuacionesOpen.value = true
 }
 
+// Only rows whose time actually changed are sent: every PATCH that changes a
+// performance time marks the slot as adjusted by hand (KAN-15), and an
+// untouched row must not be flagged.
+const changedActuaciones = computed(() => Object.entries(actuacionesDraft.value).filter(([rpId, fields]) => {
+  const rp = currentRoundParticipants.value.find((r: any) => r.id === rpId) as any
+  return (fields.performance_time || '') !== (rp?.performance_time || '')
+}))
+
+/** Where a slot would end with the time currently in the draft. */
+const actuacionEnd = (rp: any): string | null => slotEnd(
+  actuacionesDraft.value[rp.id]?.performance_time || null,
+  rp.performance_minutes ?? (currentContest.value as any)?.performance_default_minutes ?? null,
+)
+
 const saveActuaciones = async () => {
+  if (changedActuaciones.value.length === 0) {
+    isActuacionesOpen.value = false
+    return
+  }
   isSavingActuaciones.value = true
   try {
     await Promise.all(
-      Object.entries(actuacionesDraft.value).map(([rpId, fields]) =>
+      changedActuaciones.value.map(([rpId, fields]) =>
         apiClient(`/api/round-participants/${rpId}` as any, {
           method: 'PATCH',
           body: fields
         })
       )
     )
+    // The store caches per round; without invalidating, the new times would not show.
+    roundParticipantsStore.invalidate(roundId)
     await contestStore.fetchRoundParticipants(roundId)
     toast.success('Actuaciones guardadas')
     isActuacionesOpen.value = false
@@ -2414,7 +2435,8 @@ function statusLabel(status: string) {
               <TableHeader class="bg-zinc-50 dark:bg-zinc-900/50">
                 <TableRow class="border-zinc-100 dark:border-zinc-800 hover:bg-transparent">
                   <TableHead class="pl-5 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Participante</TableHead>
-                  <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-44 pr-5">Hora de actuación</TableHead>
+                  <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-44">Hora de actuación</TableHead>
+                  <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-20 pr-5">Fin</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2427,14 +2449,25 @@ function statusLabel(status: string) {
                     <div class="flex items-center gap-2">
                       <AvatarBubble :name="displayName(rp.participant, rp.participant_id)" :avatar-url="rp.participant?.avatar_url ?? null" size="w-7 h-7" text-size="text-[9px]" />
                       <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 uppercase">{{ displayName(rp.participant, rp.participant_id) }}</span>
+                      <Badge
+                        v-if="(rp as any).schedule_edited_at"
+                        variant="outline"
+                        class="text-[9px] font-bold uppercase tracking-widest border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-400"
+                        title="Cambiado a mano después de generar los turnos. Regenerar lo sobrescribirá."
+                      >
+                        Ajustado a mano
+                      </Badge>
                     </div>
                   </TableCell>
-                  <TableCell class="py-2 pr-5">
+                  <TableCell class="py-2">
                     <DateTimePicker
                       v-if="actuacionesDraft[rp.id]"
                       v-model="actuacionesDraft[rp.id].performance_time"
                       placeholder="Fecha y hora"
                     />
+                  </TableCell>
+                  <TableCell class="py-2 pr-5 font-mono text-sm text-zinc-500">
+                    {{ actuacionEnd(rp)?.slice(11, 16) ?? '—' }}
                   </TableCell>
                 </TableRow>
               </TableBody>
