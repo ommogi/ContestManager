@@ -266,3 +266,20 @@ export async function requireOrgOwnerOrMember(
 
   throw createError({ statusCode: 403, statusMessage: 'forbidden' })
 }
+
+/**
+ * Organisers only: the owner of the contest's organisation, or an accepted
+ * contest member whose role is `organizer`. A thin wrapper over
+ * `requireOrgOwnerOrMember`, which on its own also admits judges and viewers.
+ * For what the organisation manages — schedules, documents, repertoire.
+ */
+export async function requireContestOrganizer(
+  event: H3Event,
+  contestId: string,
+): Promise<OrgOwnerOrMemberResult> {
+  const access = await requireOrgOwnerOrMember(event, contestId)
+  if (access.member && access.member.role !== 'organizer') {
+    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
+  }
+  return access
+}
