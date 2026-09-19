@@ -4,7 +4,7 @@ const PUBLIC_PATHS = ['/auth/login', '/auth/callback', '/join', '/c/', '/invite'
 const ONBOARDING_PATH = '/onboarding'
 
 // Only org owners can access these
-const ORG_ONLY_PATHS = ['/contests', '/judge-pool']
+const ORG_ONLY_PATHS = ['/contests', '/judge-pool', '/works']
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server) return
