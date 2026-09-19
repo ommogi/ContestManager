@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { validateCoreFields } from '../../shared/inscription-form-core'
 import type { FormField } from '../../shared/inscription-form'
+import { MAX_WORK_SECONDS } from '../../shared/works-catalog'
 import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
 
@@ -163,6 +164,30 @@ export const RoundDrawImportSchema = z.object({
   })).min(1).max(500),
   /** false = only report what would match; true = also save it. */
   apply: z.boolean().default(false),
+})
+
+// ─── Works catalogue (KAN-16) ────────────────────────────────────────────────
+
+export const ComposerBodySchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  /** Create even though similar composers exist (the user saw the warning). */
+  force: z.boolean().optional().default(false),
+})
+
+export const ComposerPatchSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  archived: z.boolean().optional(),
+})
+
+export const WorkBodySchema = z.object({
+  composer_id: uuidString,
+  title: z.string().trim().min(1).max(300),
+  catalog_ref: z.string().trim().max(60).nullable().optional(),
+  duration_seconds: z.number().int().min(1).max(MAX_WORK_SECONDS).nullable().optional(),
+})
+
+export const WorkPatchSchema = WorkBodySchema.partial().extend({
+  archived: z.boolean().optional(),
 })
 
 export const JudgePoolSchema = z.object({

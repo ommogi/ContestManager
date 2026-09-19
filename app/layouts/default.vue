@@ -16,7 +16,7 @@ import {
   SidebarInset
 } from '@/components/ui/sidebar'
 import { useRoute } from 'vue-router'
-import { LayoutDashboard, Trophy, Settings, Users, Wallet, Ticket, Calendar as CalendarIcon } from 'lucide-vue-next'
+import { LayoutDashboard, Trophy, Settings, Users, Wallet, Ticket, Calendar as CalendarIcon, Music2 } from 'lucide-vue-next'
 import Profile from '@/components/user/profile.vue'
 import NotificationsPopover from '@/components/ui/notifications/NotificationsPopover.vue'
 import {
@@ -99,6 +99,15 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
                   <NuxtLink to="/judge-pool">
                     <Users />
                     <span>Jurados</span>
+                  </NuxtLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+
+              <SidebarMenuItem>
+                <SidebarMenuButton as-child :isActive="route.path === '/works'" tooltip="Obras">
+                  <NuxtLink to="/works">
+                    <Music2 />
+                    <span>Obras</span>
                   </NuxtLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
