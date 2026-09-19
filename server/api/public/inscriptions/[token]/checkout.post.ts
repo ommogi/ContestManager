@@ -1,6 +1,8 @@
+import type Stripe from 'stripe'
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireAuth, internalError } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
+import { buildEnrollmentMetadata } from '~~/server/utils/enrollment-metadata'
 import { CheckoutEnrollmentSchema } from '~~/server/utils/schemas'
 import {
   assertOwnedUploadPaths,
@@ -115,32 +117,95 @@ export default defineEventHandler(async (event) => {
   const applicationFee = Math.floor((contest.entry_fee_cents * feeBps) / 10000)
   const stripe = getStripe()
 
-  // Idempotency: reuse an open session for the same user+contest+category within 24h
+  // ── Idempotency ────────────────────────────────────────────────────────────
+  //
+  // Reuse an open session for the same user+contest+category, so that
+  // resubmitting the form does not mint a second payable URL. Two open sessions
+  // for one inscription means the participant can pay twice: the second payment
+  // is captured, `enroll_participant_paid` refuses it with
+  // `already_enrolled_in_category` (it is guarded by
+  // `participants_unique_user_category`), and the money sits charged with no
+  // enrolment against it.
+  //
+  // This used to filter the list by `customer_email`, which is not a parameter
+  // `sessions.list` accepts — Stripe answers
+  //   "Received unknown parameter: customer_email. Did you mean customer_details?"
+  // so the call threw on every request and a silent `catch` swallowed it. The
+  // branch never reused a session once. `customer_details.email` is the
+  // real filter, and it is populated from `customer_email` as soon as the
+  // session is created, while it is still open — verified against the API.
+  let existing: Stripe.Checkout.Session | null = null
   try {
     const existingSessions = await stripe.checkout.sessions.list({
-      limit: 1,
+      // Not 1: that asked Stripe for a single session and only then checked the
+      // contest and category, so anyone with an open session for a different
+      // contest failed to match and got a second one anyway.
+      limit: 100,
       status: 'open',
-      customer_email: email,
+      customer_details: { email },
     })
-    const existing = existingSessions.data.find(
+    existing = existingSessions.data.find(
       (s) => s.metadata?.user_id === user.id && s.metadata?.contest_id === contest.id && s.metadata?.category_id === category_id && s.status === 'open'
-    )
-    const draftId = existing?.metadata?.form_draft_id
-    // Only reuse a session that can still carry the answers. One opened before
-    // the organizer published the form has no `form_draft_id`, and reusing it
-    // would confirm a payment with nothing to store — let it fall through and
-    // open a fresh session instead.
-    if (existing?.url && (!submission || draftId)) {
-      if (submission && draftId) {
-        // That session's metadata still points at the draft written the first
-        // time round, so the answers just submitted must overwrite that row,
-        // or the payment confirms against whatever was typed before.
-        await refreshPendingFormResponses(admin, draftId, submission)
-      }
-      return { url: existing.url, id: existing.id }
+    ) ?? null
+  } catch (err: any) {
+    // Not being able to look is a reason to open a new session, not to fail —
+    // but it is never silent again. A swallowed error here is what hid a
+    // hundred-percent failure for as long as this branch has existed.
+    console.error('[checkout] could not list open sessions:', err?.message)
+  }
+
+  const draftId = existing?.metadata?.form_draft_id
+  // Only reuse a session that can still carry the answers. One opened before
+  // the organizer published the form has no `form_draft_id`, and reusing it
+  // would confirm a payment with nothing to store — let it fall through and
+  // open a fresh session instead.
+  if (existing?.url && (!submission || draftId)) {
+    if (submission && draftId) {
+      // That session's metadata still points at the draft written the first
+      // time round, so the answers just submitted must overwrite that row,
+      // or the payment confirms against whatever was typed before.
+      await refreshPendingFormResponses(admin, draftId, submission)
     }
-  } catch {
-    // fall through to create a new session
+
+    // The core values are NOT in the draft: they travel in the session's own
+    // metadata, which was written the first time round and would otherwise stay
+    // frozen. A participant who corrects a typo — or an organizer who hides a
+    // core field in between — would have the stale value written at payment.
+    // `birthdate` is the sharp edge: `enroll_participant_paid` gates min_age and
+    // max_age on it, so a stale one files someone under the wrong category.
+    //
+    // Deliberately OUTSIDE the try above: a failure here must not fall through
+    // to creating a second session. That would leave the old URL open and
+    // payable, which is the exact double-charge this branch exists to prevent.
+    // Failing closed costs a retry; the alternative writes the wrong data.
+    try {
+      await stripe.checkout.sessions.update(existing.id, {
+        metadata: buildEnrollmentMetadata(
+          {
+            organizationId: org.id,
+            contestId: contest.id,
+            token,
+            userId: user.id,
+            categoryId: category_id,
+            firstName: first_name,
+            lastName: last_name,
+            birthdate,
+            dni,
+            country,
+            email,
+            phone,
+            // The draft this session already points at, never a new one:
+            // `refreshPendingFormResponses` overwrote that same row above.
+            formDraftId: draftId ?? null,
+          },
+          'refresh',
+        ),
+      })
+    } catch (err: any) {
+      throw internalError(event, err, 'stripe.checkout.sessions.update')
+    }
+
+    return { url: existing.url, id: existing.id }
   }
 
   // Park the answers and carry only their id across Stripe. `metadata` caps
@@ -181,24 +246,24 @@ export default defineEventHandler(async (event) => {
         platform_fee_amount: String(applicationFee),
       },
     },
-    metadata: {
-      type: 'enrollment',
-      organization_id: org.id,
-      contest_id: contest.id,
+    // Same builder as the refresh above, so the two paths cannot drift. On
+    // `create` the draft pointer is omitted when there is none, which keeps a
+    // formless contest's sessions on their old 13 keys.
+    metadata: buildEnrollmentMetadata({
+      organizationId: org.id,
+      contestId: contest.id,
       token,
-      user_id: user.id,
-      category_id,
-      first_name,
-      last_name,
+      userId: user.id,
+      categoryId: category_id,
+      firstName: first_name,
+      lastName: last_name,
       birthdate,
-      dni: dni ?? '',
-      country: country ?? '',
+      dni,
+      country,
       email,
-      phone: phone ?? '',
-      // Opaque pointer into `pending_form_responses`. Absent when the contest
-      // has no published form, so those sessions keep their old 13 keys.
-      ...(formDraftId ? { form_draft_id: formDraftId } : {}),
-    },
+      phone,
+      formDraftId,
+    }),
     success_url: `${baseUrl}/join/${token}/confirm?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url:  `${baseUrl}/join/${token}?cancel=1`,
   })
