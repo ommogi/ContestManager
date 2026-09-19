@@ -89,7 +89,28 @@ export async function handleEnrollment(admin: SupabaseAdmin, evt: Stripe.Event, 
     p_payment_intent:  paymentIntent,
     p_amount_cents:    session.amount_total ?? 0,
   })
-  if (error) throw new Error(`enroll_participant_paid: ${error.message}`)
+  if (error) {
+    // `already_enrolled_in_category` means a SECOND session was paid for an
+    // inscription that already exists: the RPC refuses it, backed by
+    // `participants_unique_user_category`. The database is right to refuse, but
+    // Stripe has already captured the money, so the charge is real and the
+    // enrolment is not. Logged loudly with everything needed to find and refund
+    // it by hand — refunding automatically would be moving money on its own.
+    //
+    // The retry semantics are unchanged on purpose: this still throws, so
+    // Stripe keeps redelivering and this keeps logging. That is noisy but
+    // visible, and the alternative — swallowing it — would hide a captured
+    // payment. Fixing the redelivery loop is its own issue.
+    if (error.message?.includes('already_enrolled_in_category')) {
+      console.error(
+        '[stripe-webhook] PAID BUT NOT ENROLLED — a second session was paid for an ' +
+        'inscription that already exists. Needs a manual refund. ' +
+        `session=${session.id} payment_intent=${paymentIntent ?? 'none'} ` +
+        `amount_cents=${session.amount_total ?? 0} user=${m.user_id} category=${m.category_id}`,
+      )
+    }
+    throw new Error(`enroll_participant_paid: ${error.message}`)
+  }
 
   // ── Configurable form answers (KAN-49) ─────────────────────────────────────
   //
