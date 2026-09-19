@@ -68,6 +68,7 @@ export async function applyRoundDraw(
       id: r.id,
       draw_number: r.draw_number,
       performance_minutes: r.performance_minutes,
+      ...(r.performance_minutes_manual === undefined ? {} : { performance_minutes_manual: r.performance_minutes_manual }),
     })),
   } as never)
 

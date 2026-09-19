@@ -100,7 +100,7 @@ const row = (workId: string, title: string, catalog: number | null, override: nu
 })
 
 const rp = (status: string) => ({
-  id: 'rp-2', participant_id: 'p-1',
+  id: 'rp-2', participant_id: 'p-1', performance_minutes: 19, performance_minutes_manual: false,
   round: { id: 'r-2', name: 'Final', order: 2, status, category_id: 'cat-1', category: { contest_id: 'c-1' } },
 })
 
@@ -116,6 +116,9 @@ describe('loadRepertoire', () => {
     const view = await loadRepertoire(client, 'rp-2')
 
     expect(view.editable).toBe(true)
+    // KAN-18: the slot length that came out of this repertoire.
+    expect(view.performanceMinutes).toBe(19)
+    expect(view.performanceMinutesManual).toBe(false)
     expect(view.contestId).toBe('c-1')
     expect(view.items.map(i => i.title)).toEqual(['Asturias'])
     expect(view.total.seconds).toBe(420)

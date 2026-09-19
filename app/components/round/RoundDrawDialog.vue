@@ -24,6 +24,10 @@ export interface DrawParticipantRow {
   name: string
   draw_number: number | null
   performance_minutes: number | null
+  /** KAN-18: typed and pinned, instead of following the repertoire. */
+  performance_minutes_manual: boolean
+  /** Whether the participant has any repertoire to compute minutes from. */
+  has_repertoire: boolean
   /** "3 obras · 18:30" (KAN-17). */
   repertoire: string
 }
@@ -43,7 +47,9 @@ const api = apiClient as unknown as <T>(url: string, opts: { method: string; bod
 const open = defineModel<boolean>('open', { required: true })
 
 // Inputs hold strings so an emptied field reads as "no value", not 0.
-interface DraftRow { draw: string; minutes: string }
+// `manual` (KAN-18): the minutes were typed here or imported, so they are
+// pinned; otherwise the server takes them from the repertoire.
+interface DraftRow { draw: string; minutes: string; manual: boolean }
 const draft = ref<Record<string, DraftRow>>({})
 const isSaving = ref(false)
 const isImporting = ref(false)
@@ -55,6 +61,7 @@ watch(open, (isOpen) => {
   draft.value = Object.fromEntries(props.rows.map(r => [r.id, {
     draw: r.draw_number?.toString() ?? '',
     minutes: r.performance_minutes?.toString() ?? '',
+    manual: r.performance_minutes_manual,
   }]))
   importNotes.value = []
 })
@@ -68,7 +75,23 @@ const entries = computed<DrawEntry[]>(() => props.rows.map(r => ({
   id: r.id,
   draw_number: toInt(draft.value[r.id]?.draw ?? ''),
   performance_minutes: toInt(draft.value[r.id]?.minutes ?? ''),
+  // An emptied field pins nothing.
+  performance_minutes_manual: !!draft.value[r.id]?.manual && toInt(draft.value[r.id]?.minutes ?? '') !== null,
 })))
+
+/** Typing a length pins it (KAN-18). */
+function onMinutesInput(id: string) {
+  const row = draft.value[id]
+  if (row) row.manual = true
+}
+
+/** Back to the repertoire's total; the server recomputes it on save. */
+function unpin(row: DrawParticipantRow) {
+  const d = draft.value[row.id]
+  if (!d) return
+  d.manual = false
+  d.minutes = row.performance_minutes_manual ? '' : (row.performance_minutes?.toString() ?? '')
+}
 
 const readiness = computed(() => drawReadiness(entries.value))
 const duplicateSet = computed(() => new Set(readiness.value.duplicates))
@@ -137,7 +160,8 @@ async function onFile(event: Event) {
       const row = draft.value[m.id]
       if (!row) continue
       row.draw = m.draw_number?.toString() ?? ''
-      if (m.performance_minutes !== null) row.minutes = String(m.performance_minutes)
+      // Imported minutes are a deliberate value, so they are pinned (KAN-18).
+      if (m.performance_minutes !== null) { row.minutes = String(m.performance_minutes); row.manual = true }
     }
     if (res.unmatched.length) {
       notes.push(`Sin participante en esta ronda: fila${res.unmatched.length > 1 ? 's' : ''} ${res.unmatched.join(', ')}.`)
@@ -238,10 +262,20 @@ async function onFile(event: Event) {
                     v-if="draft[row.id]"
                     v-model="draft[row.id]!.minutes"
                     inputmode="numeric"
-                    :placeholder="defaultMinutes ? String(defaultMinutes) : '—'"
+                    :placeholder="row.has_repertoire && !draft[row.id]!.manual ? 'auto' : (defaultMinutes ? String(defaultMinutes) : '—')"
                     :aria-label="`Minutos de actuación de ${row.name}`"
+                    :aria-describedby="`minutes-source-${row.id}`"
                     class="h-8 w-20 text-sm"
+                    @input="onMinutesInput(row.id)"
                   />
+                  <!-- KAN-18: where the minutes come from -->
+                  <p v-if="draft[row.id] && row.has_repertoire" :id="`minutes-source-${row.id}`" class="mt-1 text-[10px] leading-tight">
+                    <template v-if="draft[row.id]!.manual && draft[row.id]!.minutes.trim()">
+                      <span class="text-orange-600 dark:text-orange-400">Fijado a mano</span> ·
+                      <button type="button" class="underline text-zinc-500 hover:text-zinc-800" @click="unpin(row)">volver al calculado</button>
+                    </template>
+                    <span v-else class="text-zinc-400">Del repertorio</span>
+                  </p>
                 </TableCell>
                 <TableCell class="py-2 pr-5">
                   <Button

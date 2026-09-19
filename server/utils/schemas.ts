@@ -131,6 +131,8 @@ export const RoundDrawSchema = z.object({
     id: uuidString,
     draw_number: drawNumber,
     performance_minutes: performanceMinutes,
+    /** KAN-18: pin typed minutes, or false to follow the repertoire again. */
+    performance_minutes_manual: z.boolean().optional(),
   })).min(1).max(500),
 }).refine(
   ({ rows }) => {

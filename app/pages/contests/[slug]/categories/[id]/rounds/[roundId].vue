@@ -39,7 +39,7 @@ import { repertoireSummary } from '~~/shared/repertoire'
 
 import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
 import RoundScheduleDialog from '@/components/round/RoundScheduleDialog.vue'
-import { slotEnd } from '~~/shared/schedule-generator'
+import { slotEnd, staleSlots } from '~~/shared/schedule-generator'
 import { toHHMM } from '~~/shared/session-window'
 
 const route = useRoute()
@@ -955,6 +955,8 @@ const drawRows = computed<DrawParticipantRow[]>(() => currentRoundParticipants.v
   name: displayName(rp.participant, rp.participant_id),
   draw_number: rp.draw_number ?? null,
   performance_minutes: rp.performance_minutes ?? null,
+  performance_minutes_manual: !!rp.performance_minutes_manual,
+  has_repertoire: (rp.repertoire ?? []).length > 0,
   // Embedded by GET /api/rounds/[id]/participants (KAN-17).
   repertoire: repertoireSummary((rp.repertoire ?? []).map((r: any) => ({
     duration_seconds: r.duration_seconds ?? null,
@@ -1004,6 +1006,18 @@ const sessionLabel = computed(() => {
 
 // ── Schedule generator (KAN-13) ──────────────────────────────────────────────
 const isScheduleOpen = ref(false)
+
+// KAN-18: slots generated before the minutes changed (repertoire edited, a
+// length typed or unpinned). Worked out from the rows, nothing stored.
+const staleSlotIds = computed(() => staleSlots(
+  currentRoundParticipants.value.map((rp: any) => ({
+    id: rp.id,
+    performance_time: rp.performance_time ?? null,
+    performance_end_time: rp.performance_end_time ?? null,
+    performance_minutes: rp.performance_minutes ?? null,
+  })),
+  (currentContest.value as any)?.performance_default_minutes ?? null,
+))
 
 // The generator's preview points at whichever setting is missing.
 const openDrawFromSchedule = () => { isScheduleOpen.value = false; isDrawOpen.value = true }
@@ -1293,6 +1307,15 @@ function statusLabel(status: string) {
         >
           <Wand2 class="w-3.5 h-3.5" /> Generar turnos
         </Button>
+        <span
+          v-if="currentRound && currentRound.status !== 'closed' && staleSlotIds.length"
+          class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-orange-700 dark:text-orange-400"
+          role="status"
+          title="La duración de estos turnos cambió después de generar el horario. Regenera para que cuadren."
+        >
+          <AlertCircle class="w-3.5 h-3.5" />
+          {{ staleSlotIds.length }} turno{{ staleSlotIds.length === 1 ? '' : 's' }} desactualizado{{ staleSlotIds.length === 1 ? '' : 's' }}
+        </span>
 
         <!-- Schedule buttons (only in active round) -->
         <template v-if="currentRound?.status === 'active'">
@@ -2437,6 +2460,7 @@ function statusLabel(status: string) {
     <RoundScheduleDialog
       v-model:open="isScheduleOpen"
       :round-id="roundId"
+      :stale-count="staleSlotIds.length"
       @generated="onDrawSaved"
       @open-draw="openDrawFromSchedule"
       @open-session="openSessionFromSchedule"

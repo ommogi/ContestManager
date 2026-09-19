@@ -26,6 +26,20 @@ describe('applyRoundDraw', () => {
     expect(calls).toEqual([{ fn: 'set_round_draw', args: { p_round_id: 'round-1', p_rows: rows } }])
   })
 
+  // KAN-18: the manual flag goes through when sent, and is left out when not,
+  // so the RPC keeps the stored one.
+  it('forwards the manual flag only when it is given', async () => {
+    const { client, calls } = clientReturning({ data: 2 })
+    await applyRoundDraw(client, 'round-1', [
+      { id: 'rp-1', draw_number: 1, performance_minutes: 25, performance_minutes_manual: true },
+      { id: 'rp-2', draw_number: 2, performance_minutes: null },
+    ])
+    expect((calls[0]!.args as { p_rows: unknown[] }).p_rows).toEqual([
+      { id: 'rp-1', draw_number: 1, performance_minutes: 25, performance_minutes_manual: true },
+      { id: 'rp-2', draw_number: 2, performance_minutes: null },
+    ])
+  })
+
   it.each([
     ['round_closed', 409],
     ['duplicate_draw_number', 409],

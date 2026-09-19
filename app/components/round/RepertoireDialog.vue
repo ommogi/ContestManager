@@ -24,6 +24,8 @@ interface Entry {
 
 interface View {
   editable: boolean
+  performanceMinutes: number | null
+  performanceMinutesManual: boolean
   roundStatus: string
   items: Entry[]
   previous: { roundName: string; items: Entry[] } | null
@@ -139,11 +141,20 @@ async function save() {
   if (!props.roundParticipantId || invalidRows.value.length) return
   isSaving.value = true
   try {
-    await api(`/api/round-participants/${props.roundParticipantId}/repertoire`, {
+    const saved = await api<View>(`/api/round-participants/${props.roundParticipantId}/repertoire`, {
       method: 'PUT',
       body: { items: items.value.map(i => ({ work_id: i.work_id, duration_seconds: parseDuration(i.duration) })) },
     })
-    toast.success('Repertorio guardado')
+    // KAN-18: say what happened to the slot length, which the server recomputes.
+    if (saved.performanceMinutesManual) {
+      toast.success(`Repertorio guardado. El turno sigue fijado a mano en ${saved.performanceMinutes} min.`)
+    } else if (saved.performanceMinutes !== view.value?.performanceMinutes) {
+      toast.success(saved.performanceMinutes
+        ? `Repertorio guardado. El turno pasa a ${saved.performanceMinutes} min.`
+        : 'Repertorio guardado. El turno usará la duración por defecto del concurso.')
+    } else {
+      toast.success('Repertorio guardado')
+    }
     emit('saved')
     open.value = false
   } catch (e: unknown) {
