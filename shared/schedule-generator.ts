@@ -82,6 +82,41 @@ function at(date: string, minutesFromMidnight: number): string {
 
 const DATETIME_LOCAL = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/
 
+/** Length in minutes of a generated slot; null unless both ends are readable. */
+export function slotLengthMinutes(start: string | null | undefined, end: string | null | undefined): number | null {
+  const a = DATETIME_LOCAL.exec(start ?? '')
+  const b = DATETIME_LOCAL.exec(end ?? '')
+  if (!a || !b) return null
+  const minutes = (m: RegExpExecArray) => {
+    const [y, mo, d] = m[1]!.split('-').map(Number) as [number, number, number]
+    return Date.UTC(y, mo - 1, d) / 60_000 + Number(m[2]) * 60 + Number(m[3])
+  }
+  return minutes(b) - minutes(a)
+}
+
+export interface SlotRow {
+  id: string
+  performance_time: string | null
+  performance_end_time: string | null
+  performance_minutes: number | null
+}
+
+/**
+ * Slots whose length no longer matches the participant's minutes (KAN-18):
+ * the repertoire or a typed length changed after the round was scheduled.
+ * Worked out on read, so nothing has to remember to clear a flag. Rows
+ * without both ends, or without any known length, are not judged.
+ */
+export function staleSlots(rows: readonly SlotRow[], defaultMinutes: number | null): string[] {
+  return rows
+    .filter((row) => {
+      const length = slotLengthMinutes(row.performance_time, row.performance_end_time)
+      const expected = row.performance_minutes ?? defaultMinutes
+      return length !== null && expected != null && length !== expected
+    })
+    .map(row => row.id)
+}
+
 /**
  * End of a slot that starts at `performanceStart` (datetime-local) and lasts
  * `minutes`. Used when a slot is moved by hand (KAN-15), so its end follows.

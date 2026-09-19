@@ -20,7 +20,11 @@ interface Preview {
   roundClosed: boolean
 }
 
-const props = defineProps<{ roundId: string }>()
+const props = defineProps<{
+  roundId: string
+  /** KAN-18: slots whose length no longer matches the participant's minutes. */
+  staleCount?: number
+}>()
 const emit = defineEmits<{ generated: []; openDraw: []; openSession: [] }>()
 const open = defineModel<boolean>('open', { required: true })
 
@@ -158,6 +162,15 @@ async function generate() {
               </div>
             </div>
           </div>
+
+          <p
+            v-if="(staleCount ?? 0) > 0"
+            class="rounded-lg border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/30 p-3 text-xs text-orange-800 dark:text-orange-300"
+            role="status"
+          >
+            {{ staleCount }} turno{{ staleCount === 1 ? '' : 's' }} ya no cuadra{{ staleCount === 1 ? '' : 'n' }} con la duración actual del repertorio.
+            Al generar se recolocan todos con las duraciones de ahora.
+          </p>
 
           <!-- Hand-made adjustments are called out by name, before anything is confirmed (KAN-15). -->
           <div

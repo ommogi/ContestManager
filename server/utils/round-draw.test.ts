@@ -151,6 +151,12 @@ describe('RoundDrawSchema', () => {
     }).success).toBe(true)
   })
 
+  it('accepts the KAN-18 manual flag', () => {
+    expect(RoundDrawSchema.safeParse({
+      rows: [{ id: id(1), draw_number: 1, performance_minutes: 25, performance_minutes_manual: true }],
+    }).success).toBe(true)
+  })
+
   it('rejects the same number twice in one request', () => {
     const r = RoundDrawSchema.safeParse({
       rows: [

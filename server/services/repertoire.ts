@@ -25,6 +25,9 @@ export interface RepertoireView {
   roundStatus: string
   /** Editable only while the round is pending (agreed lock). */
   editable: boolean
+  /** The slot length after this repertoire (KAN-18), and whether it is pinned by hand. */
+  performanceMinutes: number | null
+  performanceMinutesManual: boolean
   items: RepertoireEntry[]
   total: RepertoireTotal
   /** Same participant's repertoire in the previous round, to copy from. */
@@ -72,6 +75,8 @@ export class RepertoireError extends Error {
 interface RpRow {
   id: string
   participant_id: string
+  performance_minutes: number | null
+  performance_minutes_manual: boolean | null
   round: {
     id: string
     name: string
@@ -129,7 +134,7 @@ export async function contestOfRoundParticipant(client: SupabaseAdmin, rpId: str
 async function loadRp(client: SupabaseAdmin, rpId: string): Promise<RpRow> {
   const { data, error } = await client
     .from('round_participants')
-    .select('id, participant_id, round:rounds(id, name, order, status, category_id, category:categories(contest_id))')
+    .select('id, participant_id, performance_minutes, performance_minutes_manual, round:rounds(id, name, order, status, category_id, category:categories(contest_id))')
     .eq('id', rpId)
     .maybeSingle()
   if (error) throw new Error(`round_participants.select: ${error.message}`)
@@ -169,6 +174,8 @@ export async function loadRepertoire(client: SupabaseAdmin, rpId: string): Promi
     contestId: round.category!.contest_id,
     roundStatus: round.status,
     editable: round.status === 'pending',
+    performanceMinutes: rp.performance_minutes ?? null,
+    performanceMinutesManual: !!rp.performance_minutes_manual,
     items,
     total: repertoireTotal(items),
     previous,

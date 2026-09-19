@@ -13,6 +13,11 @@ export interface DrawEntry {
   id: string
   draw_number: number | null
   performance_minutes: number | null
+  /**
+   * KAN-18: true = the minutes were typed and are kept; false = they follow the
+   * repertoire. Omitted = leave the stored flag as it is.
+   */
+  performance_minutes_manual?: boolean
 }
 
 export interface DrawReadiness {
