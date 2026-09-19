@@ -44,7 +44,7 @@ describe('loadRoundSchedule', () => {
       round,
       contest: { performance_default_minutes: 10, call_offset_minutes: 60 },
       participants: [
-        { id: 'rp-2', draw_number: 2, performance_minutes: null, performance_time: '2026-10-12T15:00', participant: { name: 'Luis' } },
+        { id: 'rp-2', draw_number: 2, performance_minutes: null, performance_time: '2026-10-12T15:00', schedule_edited_at: '2026-10-12T09:00:00Z', participant: { name: 'Luis' } },
         { id: 'rp-1', draw_number: 1, performance_minutes: 20, performance_time: null, participant: { first_name: 'Ana', last_name: 'Ruiz' } },
       ],
     })
@@ -57,6 +57,8 @@ describe('loadRoundSchedule', () => {
       ['rp-2', '2026-10-12T14:20', '2026-10-12T13:20'],
     ])
     expect(ctx.alreadyScheduled).toBe(1)
+    // KAN-15: the hand-adjusted slot is reported so regenerating can name it.
+    expect(ctx.manuallyEdited).toEqual(['rp-2'])
     expect(ctx.names).toEqual({ 'rp-2': 'Luis', 'rp-1': 'Ana Ruiz' })
   })
 

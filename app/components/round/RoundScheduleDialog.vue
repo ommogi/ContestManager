@@ -15,6 +15,8 @@ interface Preview {
   plan: SchedulePlan
   names: Record<string, string>
   alreadyScheduled: number
+  /** Slots adjusted by hand since the last generation (KAN-15). */
+  manuallyEdited: string[]
   roundClosed: boolean
 }
 
@@ -51,6 +53,10 @@ watch(open, (isOpen) => { if (isOpen) load() })
 
 const plan = computed(() => preview.value?.plan ?? null)
 const errorMessage = computed(() => plan.value?.error ? SCHEDULE_ERROR_MESSAGES[plan.value.error] : null)
+
+const editedNames = computed(() =>
+  (preview.value?.manuallyEdited ?? []).map(id => preview.value?.names[id] ?? '—'),
+)
 
 const overflowMinutes = computed(() => {
   const p = plan.value
@@ -153,6 +159,20 @@ async function generate() {
             </div>
           </div>
 
+          <!-- Hand-made adjustments are called out by name, before anything is confirmed (KAN-15). -->
+          <div
+            v-if="editedNames.length"
+            class="flex items-start gap-2 rounded-lg border border-orange-200 dark:border-orange-900 bg-orange-50 dark:bg-orange-950/30 p-3 text-xs text-orange-800 dark:text-orange-300"
+            role="status"
+          >
+            <AlertCircle class="w-4 h-4 shrink-0" />
+            <p>
+              {{ editedNames.length === 1 ? 'Este turno se ajustó a mano' : `Estos ${editedNames.length} turnos se ajustaron a mano` }}
+              y se perderá{{ editedNames.length === 1 ? '' : 'n' }} al generar:
+              <strong>{{ editedNames.join(', ') }}</strong>.
+            </p>
+          </div>
+
           <div v-if="plan.slots.length" class="rounded-xl border border-zinc-100 dark:border-zinc-800 overflow-hidden">
             <Table>
               <TableHeader class="bg-zinc-50 dark:bg-zinc-900/50">
@@ -179,7 +199,7 @@ async function generate() {
             class="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
             role="alert"
           >
-            Se sobrescribirán {{ preview?.alreadyScheduled }} hora{{ preview?.alreadyScheduled === 1 ? '' : 's' }} de actuación ya asignada{{ preview?.alreadyScheduled === 1 ? '' : 's' }}. Pulsa de nuevo para confirmar.
+            Se sobrescribirán {{ preview?.alreadyScheduled }} hora{{ preview?.alreadyScheduled === 1 ? '' : 's' }} de actuación ya asignada{{ preview?.alreadyScheduled === 1 ? '' : 's' }}<template v-if="editedNames.length">, incluido{{ editedNames.length === 1 ? '' : 's' }} {{ editedNames.length }} ajuste{{ editedNames.length === 1 ? '' : 's' }} manual{{ editedNames.length === 1 ? '' : 'es' }}</template>. Pulsa de nuevo para confirmar.
           </p>
         </template>
       </div>
