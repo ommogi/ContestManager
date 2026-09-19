@@ -15,6 +15,7 @@ import { parseDate, type DateValue, getLocalTimeZone } from '@internationalized/
 import CountrySelect from '@/components/ui/country-select/CountrySelect.vue'
 import PhoneInput from '@/components/ui/phone-input/PhoneInput.vue'
 import { validateDni, detectIdKind } from '@/utils/dni'
+import { PDF_LOCALES, PDF_LOCALE_LABELS, resolveLocale, type PdfLocale } from '~~/shared/pdf-i18n'
 
 const authStore = useAuthStore()
 const { profile, organization, user, isOrgOwner, initials, displayName } = storeToRefs(authStore)
@@ -157,11 +158,14 @@ async function saveProfile() {
 const orgForm = ref({
   name: organization.value?.name ?? '',
   slug: organization.value?.slug ?? '',
+  // Language of the generated documents (KAN-19).
+  locale: resolveLocale((organization.value as any)?.locale) as PdfLocale,
 })
 watch(organization, (o) => {
   if (o) {
     orgForm.value.name = o.name
     orgForm.value.slug = o.slug
+    orgForm.value.locale = resolveLocale((o as any).locale)
   }
 })
 const savingOrg = ref(false)
@@ -173,7 +177,7 @@ async function saveOrg() {
     const supabase = nuxtApp.$supabase as any
     const { error } = await supabase
       .from('organizations')
-      .update({ name: orgForm.value.name, slug: orgForm.value.slug })
+      .update({ name: orgForm.value.name, slug: orgForm.value.slug, locale: orgForm.value.locale })
       .eq('id', organization.value.id)
     if (error) throw error
     await authStore.fetchOrganization()
@@ -478,6 +482,25 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
               />
             </div>
             <p class="text-[10px] text-muted-foreground">Solo letras minúsculas, números y guiones</p>
+          </div>
+
+          <div class="space-y-1.5">
+            <Label class="text-xs font-bold uppercase tracking-widest text-zinc-500">Idioma de los documentos</Label>
+            <div class="flex gap-2" role="radiogroup" aria-label="Idioma de los documentos">
+              <Button
+                v-for="code in PDF_LOCALES"
+                :key="code"
+                type="button"
+                role="radio"
+                :aria-checked="orgForm.locale === code"
+                :variant="orgForm.locale === code ? 'default' : 'outline'"
+                class="h-9 px-4 text-xs font-semibold"
+                @click="orgForm.locale = code"
+              >
+                {{ PDF_LOCALE_LABELS[code] }}
+              </Button>
+            </div>
+            <p class="text-[10px] text-muted-foreground">Cuadrantes y programas en PDF. La aplicación sigue en castellano.</p>
           </div>
 
           <!-- Org ID (readonly) -->

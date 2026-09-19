@@ -1021,7 +1021,29 @@ const sortedParticipantsForPdf = computed(() => {
   })
 })
 
+// The rehearsal sheet is generated on the server (KAN-19/KAN-20): organisers
+// only, call time from the contest offset, in the organisation's language.
+const isDownloadingPdf = ref(false)
+const downloadRehearsalPdf = async () => {
+  isDownloadingPdf.value = true
+  try {
+    const blob = await (apiClient as any)(`/api/rounds/${roundId}/pdf/rehearsals`, { responseType: 'blob' }) as Blob
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `ensayos-${(currentRound.value?.name || 'ronda').toLowerCase().replace(/[^a-z0-9]+/gi, '-')}.pdf`
+    link.click()
+    URL.revokeObjectURL(url)
+    isPdfOpen.value = false
+  } catch (e: any) {
+    toast.error(e?.status === 403 ? 'Solo la organización puede descargar este documento' : 'No se ha podido generar el PDF')
+  } finally {
+    isDownloadingPdf.value = false
+  }
+}
+
 const generatePdf = async () => {
+  if (pdfType.value === 'ensayos') return downloadRehearsalPdf()
   const { jsPDF } = await import('jspdf')
   const round = currentRound.value
   const contestName = currentContest.value?.name || 'Concurso'
@@ -2513,8 +2535,12 @@ function statusLabel(status: string) {
             </div>
           </div>
 
-          <!-- Sort -->
-          <div class="space-y-2">
+          <p v-if="pdfType === 'ensayos'" class="text-xs text-zinc-500">
+            Ordenado por hora de ensayo, con la convocatoria calculada con el desfase del concurso y en el idioma de la organización.
+          </p>
+
+          <!-- Sort (browser-generated "Actuaciones" only) -->
+          <div v-if="pdfType !== 'ensayos'" class="space-y-2">
             <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Ordenar por</p>
             <div class="space-y-1.5">
               <label
@@ -2542,9 +2568,11 @@ function statusLabel(status: string) {
           <Button variant="ghost" class="font-bold h-9 px-5 uppercase text-[10px] tracking-widest" @click="isPdfOpen = false">Cancelar</Button>
           <Button
             class="bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold h-9 px-6 uppercase text-[10px] tracking-widest rounded-lg shadow-sm"
+            :disabled="isDownloadingPdf"
             @click="generatePdf"
           >
-            <FileText class="w-3.5 h-3.5 mr-1.5" /> Generar PDF
+            <Activity v-if="isDownloadingPdf" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            <FileText v-else class="w-3.5 h-3.5 mr-1.5" /> Generar PDF
           </Button>
         </DialogFooter>
       </DialogContent>
