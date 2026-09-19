@@ -5,7 +5,7 @@
 // which matches rows by DNI/e-mail without sending those to the page.
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { Shuffle, Upload, Activity, AlertCircle, ListOrdered } from 'lucide-vue-next'
+import { Shuffle, Upload, Activity, AlertCircle, ListOrdered, Music2 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -24,6 +24,8 @@ export interface DrawParticipantRow {
   name: string
   draw_number: number | null
   performance_minutes: number | null
+  /** "3 obras · 18:30" (KAN-17). */
+  repertoire: string
 }
 
 const props = defineProps<{
@@ -33,7 +35,7 @@ const props = defineProps<{
   defaultMinutes: number | null
 }>()
 
-const emit = defineEmits<{ saved: [] }>()
+const emit = defineEmits<{ saved: []; editRepertoire: [row: DrawParticipantRow] }>()
 
 // apiClient's route-typed signature does not cover these new endpoints and
 // recurses too deep to infer them; call it through a plain typed shape.
@@ -212,7 +214,8 @@ async function onFile(event: Event) {
               <TableRow class="border-zinc-100 dark:border-zinc-800 hover:bg-transparent">
                 <TableHead class="pl-5 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Participante</TableHead>
                 <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-28">Nº sorteo</TableHead>
-                <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-28 pr-5">Minutos</TableHead>
+                <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-28">Minutos</TableHead>
+                <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 pr-5">Repertorio</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -230,7 +233,7 @@ async function onFile(event: Event) {
                     class="h-8 w-20 text-sm aria-[invalid=true]:border-red-500"
                   />
                 </TableCell>
-                <TableCell class="py-2 pr-5">
+                <TableCell class="py-2">
                   <Input
                     v-if="draft[row.id]"
                     v-model="draft[row.id]!.minutes"
@@ -240,9 +243,20 @@ async function onFile(event: Event) {
                     class="h-8 w-20 text-sm"
                   />
                 </TableCell>
+                <TableCell class="py-2 pr-5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="h-8 gap-1.5 text-xs font-normal"
+                    :aria-label="`Repertorio de ${row.name}`"
+                    @click="emit('editRepertoire', row)"
+                  >
+                    <Music2 class="w-3.5 h-3.5" /> {{ row.repertoire }}
+                  </Button>
+                </TableCell>
               </TableRow>
               <TableRow v-if="rows.length === 0">
-                <TableCell colspan="3" class="py-8 text-center text-sm text-zinc-400">
+                <TableCell colspan="4" class="py-8 text-center text-sm text-zinc-400">
                   Esta ronda aún no tiene participantes.
                 </TableCell>
               </TableRow>

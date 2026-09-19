@@ -29,7 +29,8 @@ export default defineEventHandler(async (event) => {
     .from('round_participants')
     .select(`
       *,
-      participant:participants(${participantFields})
+      participant:participants(${participantFields}),
+      repertoire:round_participant_works(duration_seconds, work:works(duration_seconds))
     `)
     .eq('round_id', roundId)
     // Draw first once there is one (KAN-11); undrawn rows keep insertion order.

@@ -190,6 +190,20 @@ export const WorkPatchSchema = WorkBodySchema.partial().extend({
   archived: z.boolean().optional(),
 })
 
+/**
+ * A participant's repertoire for a round (KAN-17), in playing order. The same
+ * work twice is refused here for a clear 400, and by the database again.
+ */
+export const RepertoireBodySchema = z.object({
+  items: z.array(z.object({
+    work_id: uuidString,
+    duration_seconds: z.number().int().min(1).max(MAX_WORK_SECONDS).nullable(),
+  })).max(30),
+}).refine(
+  ({ items }) => new Set(items.map(i => i.work_id)).size === items.length,
+  { message: 'duplicate_work', path: ['items'] },
+)
+
 export const JudgePoolSchema = z.object({
   full_name: z.string().max(200).nullable().optional(),
   email: emailString,

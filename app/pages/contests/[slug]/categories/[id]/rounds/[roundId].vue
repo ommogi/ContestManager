@@ -34,6 +34,8 @@ import { useRoundsStore } from '@/stores/rounds'
 import { useRoundParticipantsStore } from '@/stores/round-participants'
 import RoundDrawDialog, { type DrawParticipantRow } from '@/components/round/RoundDrawDialog.vue'
 import { drawReadiness } from '~~/shared/round-draw'
+import RepertoireDialog from '@/components/round/RepertoireDialog.vue'
+import { repertoireSummary } from '~~/shared/repertoire'
 
 import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
 import RoundScheduleDialog from '@/components/round/RoundScheduleDialog.vue'
@@ -953,7 +955,20 @@ const drawRows = computed<DrawParticipantRow[]>(() => currentRoundParticipants.v
   name: displayName(rp.participant, rp.participant_id),
   draw_number: rp.draw_number ?? null,
   performance_minutes: rp.performance_minutes ?? null,
+  // Embedded by GET /api/rounds/[id]/participants (KAN-17).
+  repertoire: repertoireSummary((rp.repertoire ?? []).map((r: any) => ({
+    duration_seconds: r.duration_seconds ?? null,
+    catalog_seconds: r.work?.duration_seconds ?? null,
+  }))),
 })))
+
+// ── Repertoire (KAN-17) ─────────────────────────────────────────────────────────
+const isRepertoireOpen = ref(false)
+const repertoireTarget = ref<DrawParticipantRow | null>(null)
+const openRepertoire = (row: DrawParticipantRow) => {
+  repertoireTarget.value = row
+  isRepertoireOpen.value = true
+}
 
 // The schedule generator (KAN-13) is gated on this; until then it is a warning.
 const roundDrawReadiness = computed(() => drawReadiness(drawRows.value))
@@ -2396,6 +2411,17 @@ function statusLabel(status: string) {
       :round-id="roundId"
       :rows="drawRows"
       :default-minutes="(currentContest as any)?.performance_default_minutes ?? null"
+      @saved="onDrawSaved"
+      @edit-repertoire="openRepertoire"
+    />
+
+    <!-- ── Repertoire dialog (KAN-17) ───────────────────────────────────────── -->
+    <RepertoireDialog
+      v-if="currentContest"
+      v-model:open="isRepertoireOpen"
+      :round-participant-id="repertoireTarget?.id ?? null"
+      :participant-name="repertoireTarget?.name ?? ''"
+      :contest-id="(currentContest as any).id"
       @saved="onDrawSaved"
     />
 
