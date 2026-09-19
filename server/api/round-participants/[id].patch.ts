@@ -2,6 +2,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { RoundParticipantPatchSchema } from '~~/server/utils/schemas'
 import { sendScheduleEmail } from '~~/server/utils/email'
+import { buildSlotUpdates } from '~~/server/utils/slot-edit'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -12,40 +13,59 @@ export default defineEventHandler(async (event) => {
   // Resolve contest_id for auth gate
   const { data: rp } = await admin
     .from('round_participants')
-    .select('round_id')
+    .select('round_id, performance_time, performance_minutes')
     .eq('id', id)
     .maybeSingle()
   if (!rp) throw createError({ statusCode: 404, statusMessage: 'round_participant_not_found' })
 
   const { data: round } = await admin
     .from('rounds')
-    .select('category_id')
+    .select('category_id, status')
     .eq('id', rp.round_id)
     .maybeSingle()
   if (!round) throw createError({ statusCode: 404, statusMessage: 'round_not_found' })
 
   const { data: category } = await admin
     .from('categories')
-    .select('contest_id')
+    .select('contest_id, contests(performance_default_minutes)')
     .eq('id', round.category_id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
   await requireOrgOwnerOrMember(event, category.contest_id)
+
+  // A closed round is locked (CLAUDE.md schema lock; KAN-15). Before this, a
+  // closed round's schedule could still be rewritten from here.
+  if ((round as any).status === 'closed') {
+    throw createError({ statusCode: 409, statusMessage: 'La ronda está cerrada y no se puede modificar.' })
+  }
 
   const rawBody = await readBody(event)
   const parsed = RoundParticipantPatchSchema.safeParse(rawBody)
   if (!parsed.success) {
     throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
-  const body = parsed.data as Record<string, any>
-  const allowed = ['rehearsal_room', 'rehearsal_time', 'rehearsal_accompanist', 'performance_time']
-  const updates: Record<string, string | null> = {}
-  for (const key of allowed) {
-    if (key in body) updates[key] = body[key]
+  if (Object.keys(parsed.data).length === 0) {
+    throw createError({ statusCode: 400, statusMessage: 'No valid fields to update' })
   }
 
+  // Moving a performance by hand keeps the slot's length and stamps it as a
+  // manual edit, so regenerating the round warns before overwriting it.
+  const updates = buildSlotUpdates(
+    {
+      performance_time: (rp as any).performance_time ?? null,
+      effectiveMinutes: (rp as any).performance_minutes
+        ?? (category as any).contests?.performance_default_minutes
+        ?? null,
+    },
+    parsed.data,
+    new Date(),
+  )
+
+  // Nothing actually changed (the dialog re-sent a stored value): answer with
+  // the row as it is rather than writing, so no email or stamp goes out.
   if (Object.keys(updates).length === 0) {
-    throw createError({ statusCode: 400, statusMessage: 'No valid fields to update' })
+    const { data: current } = await admin.from('round_participants').select().eq('id', id).single()
+    return current
   }
 
   const { data, error } = await admin

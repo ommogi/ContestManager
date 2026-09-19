@@ -37,6 +37,7 @@ import { drawReadiness } from '~~/shared/round-draw'
 
 import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
 import RoundScheduleDialog from '@/components/round/RoundScheduleDialog.vue'
+import { slotEnd } from '~~/shared/schedule-generator'
 import { toHHMM } from '~~/shared/session-window'
 
 const route = useRoute()
@@ -903,17 +904,37 @@ const openActuaciones = () => {
   isActuacionesOpen.value = true
 }
 
+// Only rows whose time actually changed are sent: every PATCH that changes a
+// performance time marks the slot as adjusted by hand (KAN-15), and an
+// untouched row must not be flagged.
+const changedActuaciones = computed(() => Object.entries(actuacionesDraft.value).filter(([rpId, fields]) => {
+  const rp = currentRoundParticipants.value.find((r: any) => r.id === rpId) as any
+  return (fields.performance_time || '') !== (rp?.performance_time || '')
+}))
+
+/** Where a slot would end with the time currently in the draft. */
+const actuacionEnd = (rp: any): string | null => slotEnd(
+  actuacionesDraft.value[rp.id]?.performance_time || null,
+  rp.performance_minutes ?? (currentContest.value as any)?.performance_default_minutes ?? null,
+)
+
 const saveActuaciones = async () => {
+  if (changedActuaciones.value.length === 0) {
+    isActuacionesOpen.value = false
+    return
+  }
   isSavingActuaciones.value = true
   try {
     await Promise.all(
-      Object.entries(actuacionesDraft.value).map(([rpId, fields]) =>
+      changedActuaciones.value.map(([rpId, fields]) =>
         apiClient(`/api/round-participants/${rpId}` as any, {
           method: 'PATCH',
           body: fields
         })
       )
     )
+    // The store caches per round; without invalidating, the new times would not show.
+    roundParticipantsStore.invalidate(roundId)
     await contestStore.fetchRoundParticipants(roundId)
     toast.success('Actuaciones guardadas')
     isActuacionesOpen.value = false
@@ -1000,7 +1021,29 @@ const sortedParticipantsForPdf = computed(() => {
   })
 })
 
+// The rehearsal sheet is generated on the server (KAN-19/KAN-20): organisers
+// only, call time from the contest offset, in the organisation's language.
+const isDownloadingPdf = ref(false)
+const downloadRehearsalPdf = async () => {
+  isDownloadingPdf.value = true
+  try {
+    const blob = await (apiClient as any)(`/api/rounds/${roundId}/pdf/rehearsals`, { responseType: 'blob' }) as Blob
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `ensayos-${(currentRound.value?.name || 'ronda').toLowerCase().replace(/[^a-z0-9]+/gi, '-')}.pdf`
+    link.click()
+    URL.revokeObjectURL(url)
+    isPdfOpen.value = false
+  } catch (e: any) {
+    toast.error(e?.status === 403 ? 'Solo la organización puede descargar este documento' : 'No se ha podido generar el PDF')
+  } finally {
+    isDownloadingPdf.value = false
+  }
+}
+
 const generatePdf = async () => {
+  if (pdfType.value === 'ensayos') return downloadRehearsalPdf()
   const { jsPDF } = await import('jspdf')
   const round = currentRound.value
   const contestName = currentContest.value?.name || 'Concurso'
@@ -2392,7 +2435,8 @@ function statusLabel(status: string) {
               <TableHeader class="bg-zinc-50 dark:bg-zinc-900/50">
                 <TableRow class="border-zinc-100 dark:border-zinc-800 hover:bg-transparent">
                   <TableHead class="pl-5 text-[10px] font-bold uppercase tracking-widest text-zinc-400">Participante</TableHead>
-                  <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-44 pr-5">Hora de actuación</TableHead>
+                  <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-44">Hora de actuación</TableHead>
+                  <TableHead class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 w-20 pr-5">Fin</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2405,14 +2449,25 @@ function statusLabel(status: string) {
                     <div class="flex items-center gap-2">
                       <AvatarBubble :name="displayName(rp.participant, rp.participant_id)" :avatar-url="rp.participant?.avatar_url ?? null" size="w-7 h-7" text-size="text-[9px]" />
                       <span class="text-sm font-semibold text-zinc-800 dark:text-zinc-200 uppercase">{{ displayName(rp.participant, rp.participant_id) }}</span>
+                      <Badge
+                        v-if="(rp as any).schedule_edited_at"
+                        variant="outline"
+                        class="text-[9px] font-bold uppercase tracking-widest border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-400"
+                        title="Cambiado a mano después de generar los turnos. Regenerar lo sobrescribirá."
+                      >
+                        Ajustado a mano
+                      </Badge>
                     </div>
                   </TableCell>
-                  <TableCell class="py-2 pr-5">
+                  <TableCell class="py-2">
                     <DateTimePicker
                       v-if="actuacionesDraft[rp.id]"
                       v-model="actuacionesDraft[rp.id].performance_time"
                       placeholder="Fecha y hora"
                     />
+                  </TableCell>
+                  <TableCell class="py-2 pr-5 font-mono text-sm text-zinc-500">
+                    {{ actuacionEnd(rp)?.slice(11, 16) ?? '—' }}
                   </TableCell>
                 </TableRow>
               </TableBody>
@@ -2480,8 +2535,12 @@ function statusLabel(status: string) {
             </div>
           </div>
 
-          <!-- Sort -->
-          <div class="space-y-2">
+          <p v-if="pdfType === 'ensayos'" class="text-xs text-zinc-500">
+            Ordenado por hora de ensayo, con la convocatoria calculada con el desfase del concurso y en el idioma de la organización.
+          </p>
+
+          <!-- Sort (browser-generated "Actuaciones" only) -->
+          <div v-if="pdfType !== 'ensayos'" class="space-y-2">
             <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Ordenar por</p>
             <div class="space-y-1.5">
               <label
@@ -2509,9 +2568,11 @@ function statusLabel(status: string) {
           <Button variant="ghost" class="font-bold h-9 px-5 uppercase text-[10px] tracking-widest" @click="isPdfOpen = false">Cancelar</Button>
           <Button
             class="bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold h-9 px-6 uppercase text-[10px] tracking-widest rounded-lg shadow-sm"
+            :disabled="isDownloadingPdf"
             @click="generatePdf"
           >
-            <FileText class="w-3.5 h-3.5 mr-1.5" /> Generar PDF
+            <Activity v-if="isDownloadingPdf" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
+            <FileText v-else class="w-3.5 h-3.5 mr-1.5" /> Generar PDF
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -80,6 +80,19 @@ function at(date: string, minutesFromMidnight: number): string {
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}T${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}`
 }
 
+const DATETIME_LOCAL = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/
+
+/**
+ * End of a slot that starts at `performanceStart` (datetime-local) and lasts
+ * `minutes`. Used when a slot is moved by hand (KAN-15), so its end follows.
+ * Null when the start is unreadable or the length unknown.
+ */
+export function slotEnd(performanceStart: string | null | undefined, minutes: number | null | undefined): string | null {
+  const m = DATETIME_LOCAL.exec(performanceStart ?? '')
+  if (!m || minutes == null || !Number.isInteger(minutes) || minutes <= 0) return null
+  return at(m[1]!, Number(m[2]) * 60 + Number(m[3]) + minutes)
+}
+
 export function planSchedule(input: ScheduleInput): SchedulePlan {
   const plan: SchedulePlan = {
     ok: false,
