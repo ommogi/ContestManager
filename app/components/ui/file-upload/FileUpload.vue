@@ -4,6 +4,7 @@ import { Upload, X, Image, Loader2 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils'
 import { objectPathFromPublicUrl } from '~~/shared/storage-path'
+import { resizeImageFile, LOGO_POLICY } from '@/utils/image-resize'
 
 /** Every object this component writes lives here. */
 const BUCKET = 'org_logos'
@@ -59,7 +60,7 @@ function triggerInput() {
 
 async function handleFile(file: File) {
   errorMessage.value = null
-  
+
   // Validate file type
   const validTypes = props.accept.split(',').map(t => t.trim())
   if (!validTypes.some(t => file.type.includes(t.replace('image/', '')))) {
@@ -76,10 +77,19 @@ async function handleFile(file: File) {
     return
   }
   
-  // Create local preview
-  previewUrl.value = URL.createObjectURL(file)
+  // Shrink after the checks and before anything else. The checks run on what
+  // the user actually picked — telling them their 8 MB file is too big is
+  // honest; silently shrinking it under the limit and accepting it is not.
+  //
+  // The format is kept: an organization logo's transparency is usually
+  // load-bearing, so only the resolution comes down. Never throws — a failure
+  // returns the original rather than blocking the upload.
   emit('upload:start')
   uploading.value = true
+  const { file: upload, mimeType, extension } = await resizeImageFile(file, LOGO_POLICY)
+
+  // Create local preview of what will actually be stored
+  previewUrl.value = URL.createObjectURL(upload)
   
   try {
     const nuxtApp = useNuxtApp()
@@ -100,12 +110,14 @@ async function handleFile(file: File) {
     // The previous object, resolved before the new one replaces it in the model.
     const previousPath = objectPathFromPublicUrl(props.modelValue, BUCKET)
 
-    const ext = file.name.split('.').pop() || 'png'
-    const path = `${userId}/${crypto.randomUUID()}.${ext}`
+    // Extension and content type follow the bytes that are actually sent, not
+    // the ones that were picked: `org_logos` declares `allowed_mime_types`
+    // (0059), so a mismatched label is refused by the bucket.
+    const path = `${userId}/${crypto.randomUUID()}.${extension}`
 
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
-      .upload(path, file, { upsert: true, contentType: file.type })
+      .upload(path, upload, { upsert: true, contentType: mimeType })
 
     if (uploadError) throw uploadError
 

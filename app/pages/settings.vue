@@ -15,6 +15,7 @@ import { parseDate, type DateValue, getLocalTimeZone } from '@internationalized/
 import CountrySelect from '@/components/ui/country-select/CountrySelect.vue'
 import PhoneInput from '@/components/ui/phone-input/PhoneInput.vue'
 import { validateDni, detectIdKind } from '@/utils/dni'
+import { resizeImageFile, AVATAR_POLICY } from '@/utils/image-resize'
 import { PDF_LOCALES, PDF_LOCALE_LABELS, resolveLocale, type PdfLocale } from '~~/shared/pdf-i18n'
 
 const authStore = useAuthStore()
@@ -43,22 +44,29 @@ const avatarPreview = ref<string | null>(profile.value?.avatar_url ?? null)
 watch(profile, (p) => { if (p?.avatar_url) avatarPreview.value = p.avatar_url })
 
 async function handleAvatarChange(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file || !user.value) return
+  const picked = (e.target as HTMLInputElement).files?.[0]
+  if (!picked || !user.value) return
 
-  // Local preview
-  avatarPreview.value = URL.createObjectURL(file)
+  // An avatar is painted under 100px, so the bytes of a phone photo are almost
+  // all waste — the seeded ones in this bucket are 1,7 MB each. The format is
+  // kept, because an avatar may legitimately be transparent; only the
+  // resolution comes down. Never throws: a failure uploads the original.
   uploadingAvatar.value = true
+  const { file, mimeType, extension } = await resizeImageFile(picked, AVATAR_POLICY)
+
+  // Local preview of what will actually be stored
+  avatarPreview.value = URL.createObjectURL(file)
 
   try {
     const nuxtApp = useNuxtApp()
     const supabase = nuxtApp.$supabase as any
-    const ext = file.name.split('.').pop()
-    const path = `${user.value.id}/avatar.${ext}`
+    // Fixed name per user, overwritten in place. The extension follows the
+    // bytes being sent, so it stays consistent with `contentType`.
+    const path = `${user.value.id}/avatar.${extension}`
 
     const { error: upErr } = await supabase.storage
       .from('avatars')
-      .upload(path, file, { upsert: true, contentType: file.type })
+      .upload(path, file, { upsert: true, contentType: mimeType })
     if (upErr) throw upErr
 
     const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path)
