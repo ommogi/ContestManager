@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { User, Building2, Lock, Save, Camera, AlertTriangle } from 'lucide-vue-next'
+import { User, Building2, Lock, Save, Camera, AlertTriangle, Bell } from 'lucide-vue-next'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,9 @@ import CountrySelect from '@/components/ui/country-select/CountrySelect.vue'
 import PhoneInput from '@/components/ui/phone-input/PhoneInput.vue'
 import { validateDni, detectIdKind } from '@/utils/dni'
 import { PDF_LOCALES, PDF_LOCALE_LABELS, resolveLocale, type PdfLocale } from '~~/shared/pdf-i18n'
+import { Checkbox } from '@/components/ui/checkbox'
+import { ORG_NOTIFICATION_EVENTS, type OrgNotificationEvent } from '~~/shared/org-notifications'
+import { apiClient } from '@/api/apiClient'
 
 const authStore = useAuthStore()
 const { profile, organization, user, isOrgOwner, initials, displayName } = storeToRefs(authStore)
@@ -168,6 +171,53 @@ watch(organization, (o) => {
     orgForm.value.locale = resolveLocale((o as any).locale)
   }
 })
+// ── Alerts to the organisation (KAN-30) ──────────────────────────────────────
+type EventMap = Record<OrgNotificationEvent, boolean>
+const notifForm = ref<{ notification_email: string; events: EventMap }>({
+  notification_email: '',
+  events: Object.fromEntries(ORG_NOTIFICATION_EVENTS.map(e => [e.id, true])) as EventMap,
+})
+const notifOwnerEmail = ref<string | null>(null)
+const savingNotifs = ref(false)
+const notifApi = apiClient as unknown as <T>(url: string, opts?: { method?: string; body?: unknown }) => Promise<T>
+
+interface NotifResponse { notification_email: string | null; owner_email: string | null; events: EventMap }
+
+function applyNotifications(data: NotifResponse) {
+  notifForm.value = { notification_email: data.notification_email ?? '', events: { ...data.events } }
+  notifOwnerEmail.value = data.owner_email
+}
+
+watch(organization, async (o) => {
+  if (!o?.id) return
+  try {
+    applyNotifications(await notifApi<NotifResponse>(`/api/organizations/${o.id}/notifications`))
+  } catch {
+    // Leave the defaults on screen; saving still works.
+  }
+}, { immediate: true })
+
+async function saveNotifications() {
+  if (!organization.value) return
+  savingNotifs.value = true
+  try {
+    applyNotifications(await notifApi<NotifResponse>(`/api/organizations/${organization.value.id}/notifications`, {
+      method: 'PATCH',
+      body: {
+        notification_email: notifForm.value.notification_email.trim() || null,
+        events: notifForm.value.events,
+      },
+    }))
+    toast.success('Avisos actualizados')
+  } catch (e: any) {
+    toast.error(e?.data?.statusMessage === 'Invalid request'
+      ? 'Revisa la dirección de correo'
+      : (e?.data?.message ?? 'No se han podido guardar los avisos'))
+  } finally {
+    savingNotifs.value = false
+  }
+}
+
 const savingOrg = ref(false)
 async function saveOrg() {
   if (!organization.value) return
@@ -518,6 +568,64 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
               <Save v-if="!savingOrg" class="w-3.5 h-3.5" />
               <span v-else class="animate-spin">⟳</span>
               {{ savingOrg ? 'Guardando...' : 'Guardar cambios' }}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- ── Alerts (KAN-30) ─────────────────────────────────────────────────── -->
+      <Card class="border-border shadow-sm">
+        <CardHeader class="pb-4">
+          <div class="flex items-center gap-3">
+            <div class="p-2 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
+              <Bell class="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+            </div>
+            <div>
+              <CardTitle class="text-base">Avisos por correo</CardTitle>
+              <CardDescription class="text-xs">Qué te avisamos cuando un participante interactúa con tu organización</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <Separator />
+        <CardContent class="pt-6 space-y-5">
+          <div class="space-y-1.5">
+            <Label for="notif-email" class="text-xs font-bold uppercase tracking-widest text-zinc-500">Dirección de destino</Label>
+            <Input
+              id="notif-email"
+              v-model="notifForm.notification_email"
+              type="email"
+              :placeholder="notifOwnerEmail || 'tu@correo.com'"
+              class="h-9 text-sm"
+            />
+            <p class="text-[10px] text-muted-foreground">
+              Déjalo vacío para usar el correo del propietario{{ notifOwnerEmail ? ` (${notifOwnerEmail})` : '' }}.
+            </p>
+          </div>
+
+          <div class="space-y-3">
+            <Label class="text-xs font-bold uppercase tracking-widest text-zinc-500">Avisos</Label>
+            <label
+              v-for="ev in ORG_NOTIFICATION_EVENTS"
+              :key="ev.id"
+              class="flex items-start gap-3 rounded-lg border border-border p-3 cursor-pointer"
+            >
+              <Checkbox v-model:checked="notifForm.events[ev.id]" class="mt-0.5" />
+              <span>
+                <span class="block text-sm font-semibold">{{ ev.label }}</span>
+                <span class="block text-[11px] text-muted-foreground">{{ ev.description }}</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="flex justify-end pt-2">
+            <Button
+              :disabled="savingNotifs"
+              class="h-9 px-6 font-bold text-[10px] uppercase tracking-widest gap-2"
+              @click="saveNotifications"
+            >
+              <Save v-if="!savingNotifs" class="w-3.5 h-3.5" />
+              <span v-else class="animate-spin">⟳</span>
+              {{ savingNotifs ? 'Guardando...' : 'Guardar avisos' }}
             </Button>
           </div>
         </CardContent>

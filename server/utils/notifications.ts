@@ -10,6 +10,12 @@ export type NotificationType =
   | 'contest_started'        // contest status → 'active'
   | 'score_published'        // a judge scored you (or final score available)
   | 'ranking_published'      // ranking pseudo-round flipped is_published=true
+  // Alerts to the organisation about what participants do (KAN-29)
+  | 'org_enrollment_created'
+  | 'org_payment_confirmed'
+  | 'org_participant_cancelled'
+  | 'org_refund_issued'
+  | 'org_judge_invitation_answered'
 
 export interface NotificationInput {
   user_id: string

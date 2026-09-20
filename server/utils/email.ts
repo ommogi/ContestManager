@@ -54,23 +54,34 @@ function warnIfSenderUnconfigured(): void {
   )
 }
 
+/** A log row already exists for this event, so the message was already sent. */
+export const ALREADY_LOGGED = Symbol('already-logged')
+
 async function logEmail(
   opts: {
     to: string
     template: string
     subject: string
     payload: Record<string, any>
+    /** Unique per event (KAN-29): a retry loses the insert and sends nothing. */
+    dedupeKey?: string | null
   }
-): Promise<string | null> {
+): Promise<string | null | typeof ALREADY_LOGGED> {
   try {
     const admin = serverSupabaseAdmin()
-    const { data } = await admin.from('email_logs').insert({
+    const { data, error } = await admin.from('email_logs').insert({
       to_address: opts.to,
       template: opts.template,
       subject: opts.subject,
       payload: opts.payload,
       status: 'pending',
+      dedupe_key: opts.dedupeKey ?? null,
     }).select('id').single()
+    if (error?.code === '23505') return ALREADY_LOGGED
+    if (error) {
+      console.error('[email] logEmail insert failed:', error.message)
+      return null
+    }
     return data?.id ?? null
   } catch (e: any) {
     console.error('[email] logEmail insert failed:', e?.message)
@@ -314,14 +325,19 @@ async function sendWithLog(
     subject: string
     payload: Record<string, any>
     html: string
+    dedupeKey?: string | null
   }
-): Promise<{ sent: boolean; id: string | null; error?: string }> {
-  const logId = await logEmail({
+): Promise<{ sent: boolean; id: string | null; error?: string; duplicate?: boolean }> {
+  const logged = await logEmail({
     to: opts.to,
     template: opts.template,
     subject: opts.subject,
     payload: opts.payload,
+    dedupeKey: opts.dedupeKey,
   })
+  // Someone already logged this exact event: a webhook retry, most likely.
+  if (logged === ALREADY_LOGGED) return { sent: false, id: null, duplicate: true }
+  const logId = logged
 
   const resend = getResend()
   if (!resend) {
@@ -629,5 +645,86 @@ export async function sendJudgeInvitationExpiredEmail(p: JudgeInvitationExpiredP
     subject,
     payload: { first_name: p.first_name, contest_name: p.contest_name },
     html,
+  })
+}
+
+// ─── Alerts to the organisation (KAN-29) ─────────────────────────────────────
+
+export interface OrgEventEmailPayload {
+  to: string
+  /** Short line above the title, e.g. "Inscripción completada". */
+  kicker: string
+  subject: string
+  title: string
+  /** Body lines, already plain text. */
+  lines: string[]
+  /** "Label: value" rows shown in a box. */
+  facts?: Array<{ label: string; value: string }>
+  /** Path inside the app the button links to, e.g. "/contests/mi-concurso". */
+  actionPath?: string | null
+  actionLabel?: string
+  /** Unique per event: a retry logs nothing new and sends nothing. */
+  dedupeKey: string
+  payload: Record<string, any>
+  template: string
+}
+
+/**
+ * One template for every alert an organisation gets about what participants
+ * do. Same frame as the participant-facing e-mails above, so both look like
+ * the same product.
+ */
+export async function sendOrgEventEmail(p: OrgEventEmailPayload) {
+  const facts = (p.facts ?? [])
+    .map(f => `
+      <tr>
+        <td style="padding:4px 0;font-size:12px;color:#71717a;width:40%;">${escapeHtml(f.label)}</td>
+        <td style="padding:4px 0;font-size:13px;font-weight:600;">${escapeHtml(f.value)}</td>
+      </tr>`)
+    .join('')
+
+  const html = `
+<!doctype html>
+<html lang="es">
+  <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#18181b;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 12px;">
+      <tr><td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
+          <tr><td style="padding:28px 32px 20px;border-bottom:1px solid #f4f4f5;">
+            <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#71717a;">${escapeHtml(p.kicker)}</p>
+            <h1 style="margin:6px 0 0;font-size:22px;font-weight:800;line-height:1.2;">${escapeHtml(p.title)}</h1>
+          </td></tr>
+          <tr><td style="padding:24px 32px;">
+            ${p.lines.map(line => `<p style="margin:0 0 14px;font-size:15px;line-height:1.55;">${escapeHtml(line)}</p>`).join('')}
+            ${facts
+              ? `<table role="presentation" width="100%" style="background:#fafafa;border:1px solid #e4e4e7;border-radius:8px;padding:12px 16px;margin:8px 0 20px;">${facts}</table>`
+              : ''}
+            ${p.actionPath
+              ? `<p style="margin:0;">
+                   <a href="${appBaseUrl()}${p.actionPath}"
+                      style="display:inline-block;background:#18181b;color:#ffffff;text-decoration:none;font-weight:700;font-size:13px;letter-spacing:0.5px;padding:12px 22px;border-radius:10px;">
+                     ${escapeHtml(p.actionLabel ?? 'Ver en Contest Manager')}
+                   </a>
+                 </p>`
+              : ''}
+          </td></tr>
+          <tr><td style="padding:18px 32px;background:#fafafa;border-top:1px solid #f4f4f5;">
+            <p style="margin:0;font-size:11px;color:#a1a1aa;line-height:1.5;">
+              Recibes este aviso porque tu organización lo tiene activado. Puedes cambiar qué avisos recibes y a qué dirección en Ajustes → Organización.
+            </p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`.trim()
+
+  return sendWithLog({
+    to: p.to,
+    template: p.template,
+    subject: p.subject,
+    payload: p.payload,
+    html,
+    dedupeKey: p.dedupeKey,
   })
 }

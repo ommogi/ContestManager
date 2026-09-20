@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseUser, serverSupabaseAdmin, requireAuth, internalError } from '~~/server/utils/supabase'
 import { sendEnrollmentEmail } from '~~/server/utils/email'
+import { notifyOrganization } from '~~/server/services/org-notifications'
 import { EnrollBodySchema } from '~~/server/utils/schemas'
 import {
   assertOwnedUploadPaths,
@@ -196,6 +197,22 @@ export default defineEventHandler(async (event) => {
         amount_paid_cents: null,
         is_paid: false,
         contest_slug: contest.slug ?? null,
+      })
+
+      // KAN-29: tell the organisation too, if it wants to hear about it.
+      void notifyOrganization(admin as never, {
+        contestId: contest.id,
+        event: 'enrollment_created',
+        entityId: String(data),
+        subject: `Nueva inscripción · ${contest.name}`,
+        title: 'Nueva inscripción',
+        lines: [`${first_name} ${last_name} se ha inscrito en ${contest.name}.`],
+        facts: [
+          { label: 'Participante', value: `${first_name} ${last_name}` },
+          { label: 'Categoría', value: categoryName },
+          { label: 'Inscripción', value: 'Gratuita' },
+        ],
+        actionPath: contest.slug ? `/contests/${contest.slug}` : null,
       })
     }
   } catch (e) {

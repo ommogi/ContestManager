@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { validateCoreFields } from '../../shared/inscription-form-core'
 import type { FormField } from '../../shared/inscription-form'
 import { MAX_WORK_SECONDS } from '../../shared/works-catalog'
+import { ORG_NOTIFICATION_EVENT_IDS } from '../../shared/org-notifications'
 import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
 
@@ -205,6 +206,16 @@ export const RepertoireBodySchema = z.object({
   ({ items }) => new Set(items.map(i => i.work_id)).size === items.length,
   { message: 'duplicate_work', path: ['items'] },
 )
+
+/** Where the organisation's alerts go and which ones are on (KAN-30). */
+export const OrgNotificationPrefsSchema = z.object({
+  notification_email: z.string().trim().email().max(320).nullable().optional(),
+  // One optional boolean per event: zod 4's z.record with an enum key demands
+  // every key, and the page sends only what it shows.
+  events: z.object(
+    Object.fromEntries(ORG_NOTIFICATION_EVENT_IDS.map(id => [id, z.boolean().optional()])),
+  ).strict().optional(),
+})
 
 export const JudgePoolSchema = z.object({
   full_name: z.string().max(200).nullable().optional(),
