@@ -25,8 +25,9 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from '@/components/ui/number-field'
-import { Save, Target, Plus, Layers, CalendarRange, Upload, X, Link2, Copy, Check, Euro, Lock, AlarmClock } from 'lucide-vue-next'
+import { Save, Target, Plus, Layers, CalendarRange, Upload, X, Link2, Copy, Check, Euro, Lock, AlarmClock, Vote } from 'lucide-vue-next'
 import { MAX_CALL_OFFSET_MINUTES } from '~~/shared/session-window'
+import { votingSystemLabel } from '~~/shared/voting'
 import { parseDate } from '@internationalized/date'
 import { type DateRange } from 'reka-ui'
 import { useContestStore } from '@/stores/contest'
@@ -438,6 +439,20 @@ const handleOpenAutoFocus = (e: Event) => {
                   />
                   <span class="text-xs font-bold text-muted-foreground">€</span>
                 </div>
+              </div>
+
+              <!-- Voting system (KAN-23): shown, never edited from here. It is
+                   chosen when the contest is created and the server refuses to
+                   change it once the jury has voted. -->
+              <div class="flex items-center gap-3 pt-2 border-t border-border/60">
+                <Vote class="w-4 h-4 text-zinc-500 shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">Sistema de votación</p>
+                  <p class="text-[10px] text-muted-foreground">Se elige al crear el concurso y no cambia una vez el jurado ha puntuado.</p>
+                </div>
+                <span class="text-xs font-bold text-zinc-700 dark:text-zinc-300">
+                  {{ votingSystemLabel((props.contest as any)?.voting_system) }}
+                </span>
               </div>
 
               <!-- Convocatoria (KAN-12) -->
