@@ -286,6 +286,8 @@ export type ContestFormPayload = {
   ends_at?: string
   is_rounds_dynamic?: boolean
   mode?: 'standard' | 'tournament'
+  /** How the jury scores this contest (KAN-23); defaults to numeric. */
+  voting_system?: 'numeric' | 'binary'
 }
 
 // Flat exports for easier consumption

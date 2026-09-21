@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { VOTING_SYSTEMS, type VotingSystem } from '~~/shared/voting'
 import { storeToRefs } from 'pinia'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,7 +37,8 @@ const step = ref(1)
 
 // ── Form data ────────────────────────────────────────────────────────────────
 const isCreating = ref(false)
-const formData = ref({ name: '', short_description: '', rules: '' })
+// KAN-23: the jury's interface follows this choice, so it is made up front.
+const formData = ref({ name: '', short_description: '', rules: '', voting_system: 'numeric' as VotingSystem })
 const dateRange = ref({ start: undefined, end: undefined }) as Ref<DateRange>
 
 const isStep1Valid = computed(() =>
@@ -67,6 +69,7 @@ async function finishContentAndCreate() {
       mode: 'standard',
       starts_at: dateRange.value.start?.toString(),
       ends_at: dateRange.value.end?.toString(),
+      voting_system: formData.value.voting_system,
     })
     createdContest.value = { id: data.id, slug: data.slug }
     toast.success('¡Concurso creado!')
@@ -379,6 +382,29 @@ const progressWidth = computed(() => `${(step.value - 1) * 25}%`)
               class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
               autofocus
             />
+          </div>
+
+          <!-- Voting system (KAN-23) -->
+          <div class="space-y-1.5">
+            <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Sistema de votación</Label>
+            <div class="grid sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Sistema de votación">
+              <button
+                v-for="system in VOTING_SYSTEMS"
+                :key="system.id"
+                type="button"
+                role="radio"
+                :aria-checked="formData.voting_system === system.id"
+                class="text-left p-3 rounded-xl border-2 transition-colors"
+                :class="formData.voting_system === system.id
+                  ? 'border-zinc-900 dark:border-zinc-100 bg-zinc-50 dark:bg-zinc-900'
+                  : 'border-zinc-100 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-600'"
+                @click="formData.voting_system = system.id"
+              >
+                <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">{{ system.label }}</span>
+                <span class="block text-xs text-zinc-500 mt-0.5">{{ system.description }}</span>
+              </button>
+            </div>
+            <p class="text-xs text-zinc-400">No se puede cambiar una vez el jurado haya puntuado.</p>
           </div>
 
           <!-- Dates -->
