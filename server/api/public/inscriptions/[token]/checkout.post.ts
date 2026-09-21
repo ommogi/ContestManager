@@ -3,6 +3,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireAuth, internalError } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
 import { buildEnrollmentMetadata } from '~~/server/utils/enrollment-metadata'
+import { decideSessionReuse } from '~~/server/utils/checkout-session-reuse'
 import { CheckoutEnrollmentSchema } from '~~/server/utils/schemas'
 import {
   assertOwnedUploadPaths,
@@ -155,11 +156,54 @@ export default defineEventHandler(async (event) => {
   }
 
   const draftId = existing?.metadata?.form_draft_id
-  // Only reuse a session that can still carry the answers. One opened before
-  // the organizer published the form has no `form_draft_id`, and reusing it
-  // would confirm a payment with nothing to store — let it fall through and
-  // open a fresh session instead.
-  if (existing?.url && (!submission || draftId)) {
+
+  // ── A session we decline cannot be left alive (KAN-79) ─────────────────────
+  //
+  // This used to fall straight through to creating a new session and leave the
+  // declined one open and payable. Two payable URLs for one inscription is the
+  // exact thing the branch above exists to prevent: paying both captures money
+  // that `enroll_participant_paid` then refuses to enrol (KAN-78).
+  //
+  // The new reason is `stale_amount`. The fee is baked into `line_items` at
+  // creation, so an organizer changing it leaves the open session charging the
+  // old price. It cannot simply be re-priced: `line_items` is updatable but
+  // `payment_intent_data` is not, so `application_fee_amount` would stay
+  // computed from the old amount — the participant would pay the new price and
+  // the platform would take its cut on the old one. Verified against the API
+  // reference: the updatable fields are `collected_information`, `line_items`,
+  // `metadata` and `shipping_options`, and nothing else.
+  const decision = existing
+    ? decideSessionReuse({
+        amountTotal: existing.amount_total,
+        url: existing.url,
+        formDraftId: draftId,
+        hasSubmission: Boolean(submission),
+        currentFeeCents: contest.entry_fee_cents,
+      })
+    : null
+
+  if (existing && decision && !decision.reuse) {
+    // Expire before creating the replacement, and fail closed if that does not
+    // work. Verified in test mode: expiring moves the session to `expired` and
+    // nulls its `url`, so it can no longer be paid — the hosted page still
+    // answers 200, but it serves Stripe's expiry screen rather than a checkout.
+    //
+    // Failing closed is the same call as the metadata refresh below, for a
+    // stronger reason: there the alternative was writing wrong data, here it is
+    // leaving a second payable URL behind.
+    try {
+      await stripe.checkout.sessions.expire(existing.id)
+      console.info(
+        `[checkout] expired a stale session (${decision.reason}) before opening a new one: ` +
+        `session=${existing.id} contest=${contest.id} user=${user.id}`,
+      )
+    } catch (err: any) {
+      throw internalError(event, err, 'stripe.checkout.sessions.expire')
+    }
+    existing = null
+  }
+
+  if (existing?.url && decision?.reuse) {
     if (submission && draftId) {
       // That session's metadata still points at the draft written the first
       // time round, so the answers just submitted must overwrite that row,
