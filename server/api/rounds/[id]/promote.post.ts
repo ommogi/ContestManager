@@ -2,6 +2,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
 import { sendPromotionEmail } from '~~/server/utils/email'
 import { PromoteBodySchema } from '~~/server/utils/schemas'
+import { buildPromotionAuditRows } from '~~/server/utils/promotion-audit'
 
 export default defineEventHandler(async (event) => {
   const admin = serverSupabaseAdmin()
@@ -38,7 +39,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', currentRound.category_id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  const { user } = await requireOrgOwnerOrMember(event, category.contest_id)
 
   // Validate participantIds belong to this round
   const { data: allRoundParts } = await admin
@@ -69,6 +70,27 @@ export default defineEventHandler(async (event) => {
       .update({ is_qualified: false })
       .eq('round_id', roundId)
       .in('participant_id', notPromotedIds)
+  }
+
+  // KAN-28: who decided who passes, written down. The client decides the number
+  // in the moment, so this trail is the only record of that decision.
+  // Best-effort: a failed log must not leave the round half-closed.
+  try {
+    const auditRows = buildPromotionAuditRows({
+      roundId,
+      promotedIds: body.participantIds,
+      notPromotedIds,
+      decidedBy: user.id,
+      decidedByName: user.email ?? null,
+      roundName: (currentRound as any)?.name ?? null,
+      nextRoundName: body.nextRoundName || `Ronda ${(currentRound as any).order + 1}`,
+    })
+    if (auditRows.length > 0) {
+      const { error: auditError } = await admin.from('score_audit_logs').insert(auditRows as never)
+      if (auditError) console.error('[promote] audit log failed:', auditError.message)
+    }
+  } catch (e: any) {
+    console.error('[promote] audit log failed:', e?.message)
   }
 
   // 3. Find/Create next round
