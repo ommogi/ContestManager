@@ -54,6 +54,42 @@ export function drawReadiness(entries: readonly DrawEntry[]): DrawReadiness {
   }
 }
 
+export interface PromotedParticipant {
+  participant_id: string
+  /** The number they had in the round they are leaving; null if never drawn. */
+  draw_number: number | null
+}
+
+/**
+ * The draw number travels with the participant (KAN-27): the client does not
+ * draw again between rounds. Numbers are compacted keeping their relative
+ * order — promote 3, 7 and 12 and they become 1, 2 and 3 — because a round of
+ * six starting at number 12 reads like a mistake.
+ *
+ * `startAt` is 1 for a fresh round, and one past the highest number already
+ * there when a second batch is promoted into the same round: the unique index
+ * on (round_id, draw_number) does not forgive a collision.
+ *
+ * Participants with no number stay last, in the order they arrived, and keep
+ * having none: inventing one would hide that nobody drew them.
+ */
+export function carryDrawNumbers(
+  promoted: readonly PromotedParticipant[],
+  options: { startAt?: number } = {},
+): Map<string, number | null> {
+  const startAt = options.startAt ?? 1
+  const drawn = promoted
+    .filter(p => p.draw_number != null)
+    .sort((a, b) => a.draw_number! - b.draw_number!)
+
+  const result = new Map<string, number | null>()
+  drawn.forEach((p, index) => result.set(p.participant_id, startAt + index))
+  for (const p of promoted) {
+    if (!result.has(p.participant_id)) result.set(p.participant_id, null)
+  }
+  return result
+}
+
 /** A draw of 1..N in random order, for the "Sortear al azar" button. */
 export function randomDraw(
   ids: readonly string[],
