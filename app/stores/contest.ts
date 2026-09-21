@@ -153,6 +153,10 @@ export const useContestStore = defineStore('contest', () => {
       roundsStore.invalidate(contestId)
       await roundsStore.fetch(contestId)
     }
+    // Both rounds changed: the one just closed and the one the participants
+    // landed in, carrying their draw numbers (KAN-27). The cache is per round,
+    // so it is cleared wholesale rather than guessing which ids moved.
+    roundParticipantsStore.invalidate()
     return data
   }
 

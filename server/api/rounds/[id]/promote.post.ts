@@ -2,6 +2,7 @@ import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
 import { sendPromotionEmail } from '~~/server/utils/email'
 import { PromoteBodySchema } from '~~/server/utils/schemas'
+import { carryDrawNumbers } from '~~/shared/round-draw'
 
 export default defineEventHandler(async (event) => {
   const admin = serverSupabaseAdmin()
@@ -43,7 +44,8 @@ export default defineEventHandler(async (event) => {
   // Validate participantIds belong to this round
   const { data: allRoundParts } = await admin
     .from('round_participants')
-    .select('participant_id')
+    // draw_number comes along: it travels with the participant (KAN-27).
+    .select('participant_id, draw_number')
     .eq('round_id', roundId)
 
   const validIds = new Set((allRoundParts ?? []).map((rp: any) => rp.participant_id))
@@ -98,21 +100,51 @@ export default defineEventHandler(async (event) => {
   }
 
   // 4. Add participants to next round
+  //
+  // The next round may already have people in it — a second batch promoted
+  // into the same round — so those are skipped (the unique (round_id,
+  // participant_id) would refuse them anyway) and the new numbers continue
+  // after the highest one already there.
+  const { data: existingNext } = await admin
+    .from('round_participants')
+    .select('participant_id, draw_number')
+    .eq('round_id', nextRound!.id)
+
+  const alreadyThere = new Set((existingNext ?? []).map((rp: any) => rp.participant_id))
+  const highestThere = (existingNext ?? [])
+    .reduce((max: number, rp: any) => Math.max(max, rp.draw_number ?? 0), 0)
+
+  const drawByParticipant = new Map(
+    (allRoundParts ?? []).map((rp: any) => [rp.participant_id, rp.draw_number ?? null]),
+  )
+  const toInsert = body.participantIds.filter((pid: string) => !alreadyThere.has(pid))
+
+  // KAN-27: carry the draw numbers over, compacted. Ordered by the number they
+  // had, so the insertion order matches the running order of the new round.
+  const carried = carryDrawNumbers(
+    toInsert.map((pid: string) => ({ participant_id: pid, draw_number: drawByParticipant.get(pid) ?? null })),
+    { startAt: highestThere + 1 },
+  )
+  const ordered = [...carried.keys()]
+
   // `is_qualified` stays NULL: entering a round is not a verdict. It is only set
   // (true/false) when THIS round is resolved above. Inserting `false` made every
   // participant of a fresh round read as "Eliminado" before anyone was scored.
-  const roundParticipants = body.participantIds.map((pid: string, idx: number) => ({
+  const roundParticipants = ordered.map((pid: string, idx: number) => ({
     round_id: nextRound!.id,
     participant_id: pid,
     order: idx + 1,
+    draw_number: carried.get(pid) ?? null,
     is_qualified: null
   }))
 
-  const { error: insertError } = await admin
-    .from('round_participants')
-    .insert(roundParticipants)
+  if (roundParticipants.length > 0) {
+    const { error: insertError } = await admin
+      .from('round_participants')
+      .insert(roundParticipants)
 
-  if (insertError) throw internalError(event, insertError, 'round_participants.insert')
+    if (insertError) throw internalError(event, insertError, 'round_participants.insert')
+  }
 
   // Send promotion emails (fire-and-forget)
   const allAffected = [...body.participantIds, ...notPromotedIds]

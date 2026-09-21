@@ -2,6 +2,7 @@
 // even though most of the module under test is in shared/.
 import { describe, it, expect } from 'vitest'
 import {
+  carryDrawNumbers,
   drawReadiness,
   matchDrawImport,
   normalizeDni,
@@ -42,6 +43,31 @@ describe('drawReadiness', () => {
 
   it('is not ready for an empty round: there is nothing to schedule', () => {
     expect(drawReadiness([]).ready).toBe(false)
+  })
+})
+
+describe('carryDrawNumbers (KAN-27)', () => {
+  const p = (id: string, draw: number | null) => ({ participant_id: id, draw_number: draw })
+
+  // The example in the ticket: promote 3, 7 and 12 and they become 1, 2 and 3.
+  it('compacts to 1..N keeping the relative order', () => {
+    const carried = carryDrawNumbers([p('c', 12), p('a', 3), p('b', 7)])
+    expect([...carried.entries()]).toEqual([['a', 1], ['b', 2], ['c', 3]])
+  })
+
+  // The unique index on (round_id, draw_number) does not forgive a collision.
+  it('continues after the numbers already in the round', () => {
+    const carried = carryDrawNumbers([p('a', 4), p('b', 9)], { startAt: 6 })
+    expect([...carried.values()]).toEqual([6, 7])
+  })
+
+  it('leaves the undrawn last and still undrawn', () => {
+    const carried = carryDrawNumbers([p('sin', null), p('b', 9), p('otro', null), p('a', 2)])
+    expect([...carried.entries()]).toEqual([['a', 1], ['b', 2], ['sin', null], ['otro', null]])
+  })
+
+  it('handles an empty promotion', () => {
+    expect(carryDrawNumbers([]).size).toBe(0)
   })
 })
 
