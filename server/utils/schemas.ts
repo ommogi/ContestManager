@@ -211,6 +211,16 @@ export const RepertoireBodySchema = z.object({
   { message: 'duplicate_work', path: ['items'] },
 )
 
+/** Where the organisation's alerts go and which ones are on (KAN-30). */
+export const OrgNotificationPrefsSchema = z.object({
+  notification_email: z.string().trim().email().max(320).nullable().optional(),
+  // One optional boolean per event: zod 4's z.record with an enum key demands
+  // every key, and the page sends only what it shows.
+  events: z.object(
+    Object.fromEntries(ORG_NOTIFICATION_EVENT_IDS.map(id => [id, z.boolean().optional()])),
+  ).strict().optional(),
+})
+
 export const JudgePoolSchema = z.object({
   full_name: z.string().max(200).nullable().optional(),
   email: emailString,

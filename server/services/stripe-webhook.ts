@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import type Stripe from 'stripe'
 import { sendEnrollmentEmail } from '~~/server/utils/email'
+import { notifyOrganization } from './org-notifications'
 // Relative on purpose: vitest does not resolve Nitro's `~~/` alias, and unlike
 // the email util this one is exercised rather than mocked in the tests.
 import {
@@ -206,6 +207,33 @@ export async function handleEnrollment(admin: SupabaseAdmin, evt: Stripe.Event, 
     } catch (e: any) {
       console.error('[webhook] enrollment email failed:', e?.message)
     }
+  }
+
+  // KAN-29: the organisation hears about the enrolment and the payment. Both
+  // keys are derived from the participant, so a retried webhook — Stripe does
+  // retry — logs nothing new and sends nothing.
+  const contestId = m.contest_id || null
+  if (contestId) {
+    const participantName = `${m.first_name ?? ''} ${m.last_name ?? ''}`.trim() || 'Un participante'
+    const amount = session.amount_total != null ? `${(session.amount_total / 100).toFixed(2)} €` : null
+    void notifyOrganization(admin as never, {
+      contestId,
+      event: 'enrollment_created',
+      entityId: String(data),
+      subject: 'Nueva inscripción',
+      title: 'Nueva inscripción',
+      lines: [`${participantName} ha completado una inscripción de pago.`],
+      facts: [{ label: 'Participante', value: participantName }, ...(amount ? [{ label: 'Importe', value: amount }] : [])],
+    })
+    void notifyOrganization(admin as never, {
+      contestId,
+      event: 'payment_confirmed',
+      entityId: String(data),
+      subject: 'Pago confirmado',
+      title: 'Pago confirmado',
+      lines: [`Stripe ha confirmado el pago de la inscripción de ${participantName}.`],
+      facts: amount ? [{ label: 'Importe', value: amount }] : undefined,
+    })
   }
 
   return { participant_id: data }

@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwner, internalError } from '~~/server/utils/supabase'
 import { getStripe } from '~~/server/utils/stripe'
+import { notifyOrganization } from '~~/server/services/org-notifications'
 import { RefundBodySchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
@@ -77,6 +78,22 @@ export default defineEventHandler(async (event) => {
     payment_status: fullyRefunded ? 'refunded' : 'partial_refund',
     stripe_refund_id: refund.id,
   }).eq('id', id)
+
+  // KAN-29. The key includes the refund id: a second, later refund of the same
+  // participant is a different event and is reported again.
+  void notifyOrganization(admin as never, {
+    contestId: participant.contest_id,
+    event: 'refund_issued',
+    entityId: `${participant.id}:${refund.id}`,
+    subject: 'Reembolso emitido',
+    title: fullyRefunded ? 'Reembolso completo emitido' : 'Reembolso parcial emitido',
+    lines: [`Se ha reembolsado ${(amount / 100).toFixed(2)} € de una inscripción.`],
+    facts: [
+      { label: 'Importe', value: `${(amount / 100).toFixed(2)} €` },
+      { label: 'Estado', value: fullyRefunded ? 'Reembolsado' : 'Reembolso parcial' },
+    ],
+    payload: { refund_id: refund.id, amount_cents: amount },
+  })
 
   return {
     refund_id: refund.id,

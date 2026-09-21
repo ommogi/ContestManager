@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { serverSupabaseAdmin, requireAuth } from '~~/server/utils/supabase'
 import { insertNotifications } from '~~/server/utils/notifications'
 import { assertInvitationNotExpired } from '~~/server/utils/invitation-expiry'
+import { notifyOrganization } from '~~/server/services/org-notifications'
 
 const RespondSchema = z.object({
   action: z.enum(['accept', 'reject']),
@@ -154,6 +155,24 @@ export default defineEventHandler(async (event) => {
         })
       }
     }
+
+    // KAN-29: the same answer by e-mail, if the organisation wants it.
+    void notifyOrganization(admin as never, {
+      contestId: member.contest_id as string,
+      event: 'judge_invitation_answered',
+      entityId: `${member.id}:${nextStatus}`,
+      subject: action === 'accept'
+        ? `Jurado aceptado · ${contestName}`
+        : `Invitación rechazada · ${contestName}`,
+      title: action === 'accept' ? 'Un jurado ha aceptado' : 'Un jurado ha rechazado',
+      lines: [`${judgeLabel} ${verb} la invitación al concurso "${contestName}".`],
+      facts: [
+        { label: 'Jurado', value: judgeLabel },
+        { label: 'Respuesta', value: action === 'accept' ? 'Aceptada' : 'Rechazada' },
+      ],
+      actionPath: contestSlug ? `/contests/${contestSlug}` : null,
+      payload: { member_id: member.id, status: nextStatus },
+    })
 
     // Confirmation notification for the judge themselves
     rows.push({
