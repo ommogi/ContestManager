@@ -52,6 +52,13 @@ watch(data, (val) => { myScores.value = (val as any)?.myScores ?? [] }, { immedi
 const avgScore = computed(() => (data.value as any)?.avgScore ?? null)
 const isJudge = computed(() => (data.value as any)?.isJudge ?? false)
 
+// Jury programme PDF (KAN-22), generated on the server for jury and organisers.
+const { isDownloading: isDownloadingProgram, download: downloadServerPdf } = useServerPdf()
+const downloadJuryProgram = () => downloadServerPdf(
+  `/api/rounds/${route.params.roundId}/pdf/jury-program`,
+  `programa-jurado-${pdfSlug(round.value?.name)}.pdf`,
+)
+
 // Real-time: refresh whenever any score in this round changes (e.g. admin edits)
 const roundId = computed(() => route.params.roundId as string)
 useRoundScoresRealtime(roundId, async () => {
@@ -221,6 +228,18 @@ watch([isRankingRound, category], ([r, c]) => {
             <p class="text-sm text-muted-foreground mt-0.5">{{ contest.name }} · {{ category?.name }}</p>
             </div>
           </div>
+          <!-- KAN-22: the jury programme, with each participant's repertoire -->
+          <Button
+            v-if="isJudge && !isRankingRound"
+            variant="outline"
+            size="sm"
+            class="gap-2"
+            :disabled="isDownloadingProgram"
+            @click="downloadJuryProgram"
+          >
+            <FileText class="w-4 h-4" />
+            {{ isDownloadingProgram ? 'Generando…' : 'Programa (PDF)' }}
+          </Button>
         </div>
       </div>
 
