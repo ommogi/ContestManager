@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
 import { RoundCreateSchema } from '~~/server/utils/schemas'
+import { scoringTypeFor } from '~~/shared/voting'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
@@ -40,6 +41,15 @@ export default defineEventHandler(async (event) => {
   const payload: Record<string, any> = {}
   for (const key of allowed) {
     if (key in body) payload[key] = body[key]
+  }
+  // KAN-23: same scoring as the contest unless the caller asked for another.
+  if (!payload.scoring_type) {
+    const { data: contestRow } = await admin
+      .from('contests')
+      .select('voting_system')
+      .eq('id', id)
+      .maybeSingle()
+    payload.scoring_type = scoringTypeFor((contestRow as any)?.voting_system)
   }
 
   const { data, error } = await admin.from('rounds').insert(payload).select().single()

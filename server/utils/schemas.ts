@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { validateCoreFields } from '../../shared/inscription-form-core'
 import type { FormField } from '../../shared/inscription-form'
 import { MAX_WORK_SECONDS } from '../../shared/works-catalog'
-import { ORG_NOTIFICATION_EVENT_IDS } from '../../shared/org-notifications'
+import { VOTING_SYSTEM_IDS } from '../../shared/voting'
 import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
 
@@ -99,8 +99,12 @@ export const CheckoutEnrollmentSchema = z.object({
   ...formSubmissionFields,
 })
 
+const votingSystem = z.enum(VOTING_SYSTEM_IDS as unknown as [string, ...string[]])
+
 export const ContestCreateSchema = z.object({
   name: z.string().min(1).max(200),
+  /** How the jury scores (KAN-23); defaults to numeric in the database. */
+  voting_system: votingSystem.optional(),
   short_description: z.string().max(2000).nullable().optional(),
   prizes: z.string().max(5000).nullable().optional(),
   rules: z.string().max(10000).nullable().optional(),
@@ -249,6 +253,7 @@ export const ContestPatchSchema = z.object({
   rules: z.string().max(10000).nullable().optional(),
   entry_fee_cents: z.number().int().min(0).nullable().optional(),
   registration_open: z.boolean().optional(),
+  voting_system: votingSystem.optional(),
   /** Minutes before their performance a participant is called (KAN-12). */
   call_offset_minutes: z.number().int().min(0).max(MAX_CALL_OFFSET_MINUTES).nullable().optional(),
 })
