@@ -33,6 +33,7 @@ import { type DateRange } from 'reka-ui'
 import { useContestStore } from '@/stores/contest'
 import { toast } from 'vue-sonner'
 import { objectPathFromPublicUrl } from '~~/shared/storage-path'
+import { resizeImageFile, COVER_POLICY } from '@/utils/image-resize'
 
 const props = defineProps<{
   open: boolean
@@ -98,12 +99,23 @@ async function discardCoverObjects(paths: string[]) {
 
 async function handleCoverChange(e: Event) {
   const inputEl = e.target as HTMLInputElement
-  const file = inputEl.files?.[0]
-  if (!file || !props.contest?.id) return
+  const picked = inputEl.files?.[0]
+  if (!picked || !props.contest?.id) return
+
+  // Shrink before anything else, so the preview shows what will actually be
+  // uploaded rather than the original. A cover is flattened to JPEG: it is a
+  // full-bleed image where transparency means nothing, and that conversion is
+  // what turned 4,7 MB into 311 kB for the default cover (KAN-80) — the same
+  // picture as PNG still weighed 2,7 MB.
+  //
+  // Never throws: on any failure it hands back the original, because blocking
+  // an upload over an optimisation would punish the user for something they did
+  // not ask for.
+  uploadingCover.value = true
+  const { file, mimeType, extension } = await resizeImageFile(picked, COVER_POLICY)
 
   // Local preview
   editForm.value.cover_image_url = URL.createObjectURL(file)
-  uploadingCover.value = true
 
   try {
     const nuxtApp = useNuxtApp()
@@ -112,12 +124,16 @@ async function handleCoverChange(e: Event) {
     // It used to be `covers/<contest_id>-<timestamp>.<ext>` — the id inside the
     // file name — which no storage policy can read, so the bucket had to allow
     // any authenticated user to write anywhere (0060).
-    const ext = file.name.split('.').pop()
-    const path = `covers/${props.contest.id}/${crypto.randomUUID()}.${ext}`
+    //
+    // The extension and the content type come from the file that actually
+    // results, never from the one that was picked: a PNG that leaves here as
+    // JPEG and is labelled `image/png` is refused outright by the bucket's
+    // `allowed_mime_types` (0060).
+    const path = `covers/${props.contest.id}/${crypto.randomUUID()}.${extension}`
 
     const { error: upErr } = await supabase.storage
       .from(BUCKET)
-      .upload(path, file, { upsert: true, contentType: file.type })
+      .upload(path, file, { upsert: true, contentType: mimeType })
     if (upErr) throw upErr
 
     const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path)
