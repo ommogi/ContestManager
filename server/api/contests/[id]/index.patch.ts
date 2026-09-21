@@ -62,6 +62,31 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  // KAN-23: the voting system is locked once anyone has voted. Changing it
+  // would reinterpret the votes already cast — a mark is not a pass/no pass.
+  if (body.voting_system) {
+    const cur = await loadContest()
+    const { data: current } = await admin
+      .from('contests')
+      .select('voting_system')
+      .eq('id', cur!.id)
+      .maybeSingle()
+    const stored = (current as any)?.voting_system ?? 'numeric'
+    if (body.voting_system !== stored) {
+      const { count, error: scoreErr } = await admin
+        .from('scores')
+        .select('id, rounds!inner(categories!inner(contest_id))', { count: 'exact', head: true })
+        .eq('rounds.categories.contest_id', cur!.id)
+      if (scoreErr) throw internalError(event, scoreErr, 'scores.select')
+      if ((count ?? 0) > 0) {
+        throw createError({
+          statusCode: 409,
+          statusMessage: 'Ya hay puntuaciones registradas: el sistema de votación no se puede cambiar.',
+        })
+      }
+    }
+  }
+
   // Once a contest has been activated, it cannot be reverted to 'draft'.
   // Terminal states ('finished', 'cancelled') are still allowed.
   if (body.status === 'draft') {

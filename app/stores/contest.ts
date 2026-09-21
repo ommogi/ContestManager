@@ -124,7 +124,8 @@ export const useContestStore = defineStore('contest', () => {
   }
 
   async function createRound(categoryId: string, name: string, order: number) {
-    const data = await roundsStore.createForCategory(categoryId, { name, order, status: 'active', scoring_type: 'numeric' })
+    // KAN-23: no scoring_type here — the server takes it from the contest.
+    const data = await roundsStore.createForCategory(categoryId, { name, order, status: 'active' })
     const contestId = contestsStore.current?.id
     if (contestId) {
       roundsStore.invalidate(contestId)

@@ -1,13 +1,18 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
 import { RoundCreateSchema } from '~~/server/utils/schemas'
+import { scoringTypeFor } from '~~/shared/voting'
 
 export default defineEventHandler(async (event) => {
   const categoryId = getRouterParam(event, 'id')
   if (!categoryId) throw createError({ statusCode: 400, statusMessage: 'Missing category ID' })
 
   const admin = serverSupabaseAdmin()
-  const { data: category } = await admin.from('categories').select('contest_id').eq('id', categoryId).maybeSingle()
+  const { data: category } = await admin
+    .from('categories')
+    .select('contest_id, contests(voting_system)')
+    .eq('id', categoryId)
+    .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
   await requireOrgOwnerOrMember(event, category.contest_id)
 
@@ -21,6 +26,11 @@ export default defineEventHandler(async (event) => {
   const roundData: Record<string, any> = { category_id: categoryId }
   for (const key of allowed) {
     if (key in body) roundData[key] = body[key]
+  }
+  // KAN-23: unless the caller says otherwise, the round scores the way the
+  // contest does — the jury should not meet a different interface per round.
+  if (!roundData.scoring_type) {
+    roundData.scoring_type = scoringTypeFor((category as any)?.contests?.voting_system)
   }
 
   // Gate: if creating an active round, the parent contest must be active

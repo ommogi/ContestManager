@@ -39,6 +39,7 @@ export default defineEventHandler(async (event) => {
     slug,
     description: short_description || null,
     rules: rules || null,
+    voting_system: restBody.voting_system ?? 'numeric',
     settings: {
       prizes: prizes || null,
     }

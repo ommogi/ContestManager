@@ -433,6 +433,9 @@ function auditActionLabel(action: string) {
     score_updated: 'Nota modificada',
     override_set: 'Nota final establecida',
     override_removed: 'Nota final eliminada',
+    // KAN-28: the promotion decision itself.
+    promoted: 'Clasificado',
+    not_promoted: 'No clasificado',
   }
   return map[action] ?? action
 }
@@ -441,6 +444,8 @@ function auditActionColor(action: string) {
   if (action === 'override_set') return 'text-purple-600 dark:text-purple-400'
   if (action === 'override_removed') return 'text-red-500'
   if (action === 'score_updated') return 'text-amber-500'
+  if (action === 'not_promoted') return 'text-zinc-500'
+  if (action === 'promoted') return 'text-blue-600 dark:text-blue-400'
   return 'text-emerald-600 dark:text-emerald-400'
 }
 
@@ -542,12 +547,11 @@ function autoSelectTopByLimit() {
   selectedPromotionIds.value = selected
 }
 
-watch(promotionLimit, () => {
-  if (isPromotionModalOpen.value) autoSelectTopByLimit()
-})
-
+// KAN-28: no automatic quota. The jury decides how many pass in the moment, so
+// the dialog opens with nothing selected and "preseleccionar los N primeros" is
+// a button the organisation presses if it wants a starting point.
 watch(isPromotionModalOpen, (v) => {
-  if (v) autoSelectTopByLimit()
+  if (v) selectedPromotionIds.value = []
 })
 
 // ── Final ranking ─────────────────────────────────────────────────────────────
@@ -2096,7 +2100,7 @@ function statusLabel(status: string) {
             <Trophy class="w-5 h-5 text-white dark:text-zinc-900" />
           </div>
           <div class="flex-1 min-w-0">
-            <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-0.5">Selección estratégica de cupos finalistas</p>
+            <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-0.5">Marca libremente quién pasa de ronda</p>
             <h2 class="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">Promoción de Rondas</h2>
           </div>
         </div>
@@ -2105,20 +2109,25 @@ function statusLabel(status: string) {
         <div class="px-6 pt-5 grid grid-cols-2 gap-4">
           <div class="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-900 rounded-xl border-2 border-zinc-100 dark:border-zinc-800">
             <div class="flex flex-col">
-              <span class="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Participantes a pasar</span>
-              <span class="text-[9px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Selección automática top N</span>
+              <span class="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Ayuda: marcar los mejores</span>
+              <span class="text-[9px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Sin cupo · decides tú quién pasa</span>
             </div>
-            <NumberField
-              v-model="promotionLimit"
-              :min="1"
-              :max="allPromotionParticipants.length || 1"
-            >
-              <NumberFieldContent class="border-2 border-zinc-200 dark:border-zinc-700 rounded-lg h-9 w-32">
-                <NumberFieldDecrement class="px-2 shrink-0" />
-                <NumberFieldInput class="text-center font-black text-base h-full min-w-0 flex-1" />
-                <NumberFieldIncrement class="px-2 shrink-0" />
-              </NumberFieldContent>
-            </NumberField>
+            <div class="flex items-center gap-2">
+              <NumberField
+                v-model="promotionLimit"
+                :min="1"
+                :max="allPromotionParticipants.length || 1"
+              >
+                <NumberFieldContent class="border-2 border-zinc-200 dark:border-zinc-700 rounded-lg h-9 w-28">
+                  <NumberFieldDecrement class="px-2 shrink-0" />
+                  <NumberFieldInput class="text-center font-black text-base h-full min-w-0 flex-1" />
+                  <NumberFieldIncrement class="px-2 shrink-0" />
+                </NumberFieldContent>
+              </NumberField>
+              <Button variant="outline" size="sm" class="h-9 text-[10px] font-bold uppercase tracking-widest" @click="autoSelectTopByLimit">
+                Marcar
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -2201,7 +2210,9 @@ function statusLabel(status: string) {
 
         <!-- Footer -->
         <div class="p-5 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 flex items-center justify-between gap-4">
-          <span class="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">{{ selectedPromotionCount }} seleccionado{{ selectedPromotionCount !== 1 ? 's' : '' }}</span>
+          <span class="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
+            {{ selectedPromotionCount }} de {{ allPromotionParticipants.length }} seleccionado{{ selectedPromotionCount !== 1 ? 's' : '' }} · sin cupo
+          </span>
           <div class="flex items-center gap-3">
             <Button variant="ghost" class="font-bold h-9 px-5 uppercase text-[10px] tracking-widest" @click="isPromotionModalOpen = false">Cancelar</Button>
             <Button
