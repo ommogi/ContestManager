@@ -9,11 +9,11 @@ import {
 } from '@/components/ui/alert-dialog'
 import { marked } from 'marked'
 
-const DEFAULT_COVER = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/default-cover.png'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { getStatusClasses, getStatusBannerClasses, getTypeBannerClasses } from '@/utils/styles'
+import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -181,7 +181,7 @@ const parsedRules = computed(() => marked.parse(contest.value?.rules || '') as s
       <!-- Banner -->
       <div
         class="relative w-full h-56 md:h-72 rounded-2xl overflow-hidden border-2 border-border shadow-sm bg-muted bg-center bg-cover"
-        :style="`background-image: url('${contest.cover_image_url || DEFAULT_COVER}')`"
+        :style="`background-image: url('${contest.cover_image_url || DEFAULT_CONTEST_COVER_URL}')`"
       >
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-black/50"></div>
 

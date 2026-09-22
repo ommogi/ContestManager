@@ -5,6 +5,7 @@ import Grainient from '@/components/common/Grainient.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { BRAND_LOGO_URL } from '~~/shared/brand-assets'
 
 definePageMeta({
   layout: false,
@@ -172,7 +173,7 @@ const vReveal: Directive<HTMLElement, void> = {
       <div class="mx-auto flex max-w-7xl items-center justify-between rounded-full border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-xl sm:px-6">
         <NuxtLink to="/" class="flex items-center gap-3 cursor-pointer">
           <img
-            src="https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png"
+            :src="BRAND_LOGO_URL"
             alt="Contest Manager"
             class="h-10 w-10 rounded-2xl object-contain"
           >

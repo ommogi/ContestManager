@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { CalendarClock, Tag, Trash, AlertTriangle } from 'lucide-vue-next'
 import { getStatusBannerClasses } from '@/utils/styles'
 import {
+import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -17,7 +18,6 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
-const DEFAULT_COVER = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/default-cover.png'
 
 const props = withDefaults(defineProps<{
   contest: Record<string, any>
@@ -68,7 +68,7 @@ const startsAtLabel = computed(() => {
     <!-- Cover fills the whole card -->
     <div
       class="absolute inset-0 bg-cover bg-center transition-transform duration-500 group-hover:scale-105"
-      :style="`background-image: url('${contest.cover_image_url || DEFAULT_COVER}')`"
+      :style="`background-image: url('${contest.cover_image_url || DEFAULT_CONTEST_COVER_URL}')`"
     />
     <!-- Bottom-weighted so the text block stays readable over any artwork -->
     <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-black/20 pointer-events-none" />
