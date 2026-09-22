@@ -5,10 +5,6 @@ import { MAX_WORK_SECONDS } from '../../shared/works-catalog'
 import { VOTING_SYSTEM_IDS } from '../../shared/voting'
 import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
-// Explícito y no por auto-import: vitest no resuelve los auto-imports de Nitro,
-// así que sin esta línea este fichero revienta al cargarse y se lleva por
-// delante los 10 ficheros de test que lo importan, directa o indirectamente.
-import { ORG_NOTIFICATION_EVENT_IDS } from '../../shared/org-notifications'
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
