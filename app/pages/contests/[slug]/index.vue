@@ -23,6 +23,7 @@ import {
 import { useContestStore } from '@/stores/contest'
 import { storeToRefs } from 'pinia'
 import { getStatusClasses, getTypeClasses, getModeClasses, getTierClasses, getStatusBannerClasses, getTypeBannerClasses, getModeBannerClasses } from '@/utils/styles'
+import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
 
 const route = useRoute()
 const contestStore = useContestStore()
@@ -51,8 +52,7 @@ const contestSettings = computed(() => {
   }
 })
 
-const DEFAULT_COVER = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/default-cover.png'
-const coverImage = computed(() => currentContest.value?.cover_image_url || DEFAULT_COVER)
+const coverImage = computed(() => currentContest.value?.cover_image_url || DEFAULT_CONTEST_COVER_URL)
 
 const parsedDescription = computed(() => marked.parse(currentContest.value?.description || '') as string)
 const parsedRules = computed(() => marked.parse(currentContest.value?.rules || '') as string)
