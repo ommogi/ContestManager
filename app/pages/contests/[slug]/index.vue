@@ -8,6 +8,7 @@ import RichEditor from '@/components/ui/rich-editor/RichEditor.vue'
 import { marked } from 'marked'
 import { toast } from 'vue-sonner'
 import CreateCategoryDialog from '~/components/contest/CreateCategoryDialog.vue'
+import PublicProgramDialog from '~/components/contest/PublicProgramDialog.vue'
 import EditContestDrawer from '~/components/contest/EditContestDrawer.vue'
 import { Input } from '@/components/ui/input'
 import {
@@ -272,6 +273,12 @@ async function confirmDeleteCategory() {
               </Badge>
             </Button>
           </NuxtLink>
+
+          <PublicProgramDialog
+            v-if="currentContest?.id"
+            :contest-id="currentContest.id"
+            :contest-name="currentContest.name"
+          />
 
           <Button
             v-if="(currentContest as any)?.registration_open"
