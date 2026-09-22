@@ -26,6 +26,12 @@ export const INSCRIPTION_UPLOADS_BUCKET = 'inscription-uploads'
  * is the sizing case from KAN-59, and at 25 MB a file that is 20 GB for one
  * contest — hence the per-contest cap below as well.
  */
+/**
+ * ⚠️ El bucket `inscription-uploads` lleva este mismo número como
+ * `file_size_limit` desde `0075_bucket_limits.sql`, y Storage lo aplica incluso
+ * al `service_role`. Subir esta constante sin tocar aquella migración hace que
+ * el bucket rechace en silencio ficheros que esta capa considera válidos.
+ */
 export const PLATFORM_MAX_FILE_SIZE_MB = 25
 export const PLATFORM_MAX_FILES_PER_FIELD = 10
 /** Conservative per-contest ceiling. Raise deliberately, per contest, not by accident. */
