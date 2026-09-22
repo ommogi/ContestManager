@@ -4,8 +4,10 @@ import { apiClient } from '@/api/apiClient'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
 import {
   Trophy, MapPin, Clock, Users, Star,
-  CheckCircle2, AlertCircle, Hash, User, Edit3, ThumbsUp, FileText
+  CheckCircle2, AlertCircle, Hash, User, Edit3, ThumbsUp, FileText, X
 } from 'lucide-vue-next'
+import BinaryVoteInput from '@/components/round/BinaryVoteInput.vue'
+import { BINARY_PASS, binaryVoteLabel, isBinaryScoring, isBinaryVoteValue } from '~~/shared/voting'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -95,15 +97,37 @@ function openScoring(slot: any) {
 
 const maxScore = computed(() => round.value?.max_score ?? 10)
 
+// Binary rounds (KAN-24) are told apart by their own scoring_type, which the
+// contest's voting system set when the round was created.
+const isBinaryRound = computed(() => isBinaryScoring(round.value?.scoring_type))
+
+// The dialog keeps '' for "nothing chosen yet"; the vote control speaks null.
+const voteValue = computed<number | null>({
+  get: () => (scoreForm.value.value === '' ? null : Number(scoreForm.value.value)),
+  set: (value) => { scoreForm.value.value = value ?? '' },
+})
+
 const scoreIsValid = computed(() => {
+  if (scoreForm.value.value === '') return false
   const v = Number(scoreForm.value.value)
+  if (isBinaryRound.value) return isBinaryVoteValue(v)
   return !isNaN(v) && v >= 0 && v <= maxScore.value
 })
+
+// What the server answers with when it refuses a score (KAN-24).
+const SCORE_ERRORS: Record<string, string> = {
+  round_closed: 'La ronda está cerrada.',
+  round_not_active: 'La ronda todavía no está abierta.',
+  invalid_binary_vote: 'El voto solo puede ser pasa o no pasa.',
+  invalid_score: 'La puntuación no es válida.',
+}
 
 async function submitScore() {
   if (!selectedSlot.value || !authStore.session?.user?.id) return
   if (!scoreIsValid.value) {
-    toast.error(`La nota debe estar entre 0 y ${maxScore.value}`)
+    toast.error(isBinaryRound.value
+      ? 'Elige si el participante pasa o no pasa'
+      : `La nota debe estar entre 0 y ${maxScore.value}`)
     return
   }
   isSubmittingScore.value = true
@@ -118,7 +142,8 @@ async function submitScore() {
         judge_id: authStore.session.user.id,
         value: Number(scoreForm.value.value),
         notes: scoreForm.value.notes.trim() || null,
-        promote: scoreForm.value.promote
+        // A binary round has no ties to break: the vote is the whole verdict.
+        promote: isBinaryRound.value ? false : scoreForm.value.promote
       }
     }) as any
 
@@ -128,9 +153,10 @@ async function submitScore() {
     else myScores.value.push(res)
 
     isScoringOpen.value = false
-    toast.success('Puntuación guardada correctamente.')
+    toast.success(isBinaryRound.value ? 'Voto guardado correctamente.' : 'Puntuación guardada correctamente.')
   } catch (err: any) {
-    toast.error('Error al guardar: ' + (err.data?.message ?? err.message))
+    const code = err?.data?.statusMessage ?? err?.data?.message ?? err?.message
+    toast.error('Error al guardar: ' + (SCORE_ERRORS[code] ?? code))
   } finally {
     isSubmittingScore.value = false
   }
@@ -450,8 +476,20 @@ watch([isRankingRound, category], ([r, c]) => {
             <!-- Judge: my score for this participant -->
             <div v-if="isJudge" class="flex items-center gap-3 ml-auto">
               <div v-if="getMyScore(slot)" class="flex items-center gap-2">
+                <!-- Vote badge (binary round) -->
+                <div
+                  v-if="isBinaryRound"
+                  class="flex items-center gap-1 rounded-lg border px-2.5 py-1 text-sm font-black"
+                  :class="Number(getMyScore(slot)?.value) === BINARY_PASS
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-300'
+                    : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-950/30 dark:border-red-800 dark:text-red-300'"
+                >
+                  <CheckCircle2 v-if="Number(getMyScore(slot)?.value) === BINARY_PASS" class="w-3.5 h-3.5 shrink-0" />
+                  <X v-else class="w-3.5 h-3.5 shrink-0" />
+                  {{ binaryVoteLabel(getMyScore(slot)?.value) }}
+                </div>
                 <!-- Score badge -->
-                <div class="flex items-center gap-1 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-2.5 py-1">
+                <div v-else class="flex items-center gap-1 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-2.5 py-1">
                   <Star class="w-3.5 h-3.5 text-amber-500 fill-amber-400 shrink-0" />
                   <span class="text-sm font-black tabular-nums text-amber-700 dark:text-amber-300">
                     {{ getMyScore(slot)?.value }}
@@ -460,7 +498,7 @@ watch([isRankingRound, category], ([r, c]) => {
                 </div>
                 <!-- Promote badge -->
                 <Badge
-                  v-if="getMyScore(slot)?.promote"
+                  v-if="!isBinaryRound && getMyScore(slot)?.promote"
                   class="bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-800 text-[10px] font-bold border-2 gap-1"
                 >
                   <ThumbsUp class="w-3 h-3" />
@@ -485,9 +523,11 @@ watch([isRankingRound, category], ([r, c]) => {
                 class="gap-1.5 text-[11px] h-8 px-3 font-bold uppercase tracking-wider"
               >
                 <Edit3 class="w-3.5 h-3.5" />
-                Puntuar
+                {{ isBinaryRound ? 'Votar' : 'Puntuar' }}
               </Button>
-              <span v-else class="text-xs text-muted-foreground/60 italic">Sin puntuar</span>
+              <span v-else class="text-xs text-muted-foreground/60 italic">
+                {{ isBinaryRound ? 'Sin votar' : 'Sin puntuar' }}
+              </span>
             </div>
 
             <!-- Participant: me badge + time -->
@@ -533,7 +573,7 @@ watch([isRankingRound, category], ([r, c]) => {
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <Star class="w-5 h-5 text-amber-500" />
-            Puntuar a {{ selectedSlot?.participants?.name || `${selectedSlot?.participants?.first_name} ${selectedSlot?.participants?.last_name}`.trim() }}
+            {{ isBinaryRound ? 'Votar a' : 'Puntuar a' }} {{ selectedSlot?.participants?.name || `${selectedSlot?.participants?.first_name} ${selectedSlot?.participants?.last_name}`.trim() }}
           </DialogTitle>
           <DialogDescription>
             Categoría <strong>{{ category?.name }}</strong> · {{ round?.name }}
@@ -542,8 +582,20 @@ watch([isRankingRound, category], ([r, c]) => {
 
         <div class="space-y-5 py-2">
 
+          <!-- Voto (ronda binaria) -->
+          <div v-if="isBinaryRound" class="space-y-2">
+            <Label class="text-sm font-bold flex items-center justify-between">
+              <span class="flex items-center gap-1.5">
+                <CheckCircle2 class="w-4 h-4 text-emerald-500" />
+                Voto
+              </span>
+              <span class="text-xs font-normal text-muted-foreground">Sin puntos intermedios</span>
+            </Label>
+            <BinaryVoteInput v-model="voteValue" />
+          </div>
+
           <!-- Nota -->
-          <div class="space-y-2">
+          <div v-else class="space-y-2">
             <Label class="text-sm font-bold flex items-center justify-between">
               <span class="flex items-center gap-1.5">
                 <Star class="w-4 h-4 text-amber-500" />
@@ -587,6 +639,7 @@ watch([isRankingRound, category], ([r, c]) => {
 
           <!-- Promocionar -->
           <div
+            v-if="!isBinaryRound"
             class="flex items-start gap-4 rounded-xl border-2 p-4 cursor-pointer transition-all select-none"
             :class="scoreForm.promote
               ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-600'
@@ -628,7 +681,7 @@ watch([isRankingRound, category], ([r, c]) => {
             class="gap-2"
           >
             <CheckCircle2 v-if="!isSubmittingScore" class="w-4 h-4" />
-            {{ isSubmittingScore ? 'Guardando...' : 'Guardar puntuación' }}
+            {{ isSubmittingScore ? 'Guardando...' : (isBinaryRound ? 'Guardar voto' : 'Guardar puntuación') }}
           </Button>
         </DialogFooter>
       </DialogContent>
