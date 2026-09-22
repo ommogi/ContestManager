@@ -1,27 +1,33 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { generatedAvatarUri } from '~~/shared/avatar'
 
 const props = defineProps<{
   name: string
   avatarUrl?: string | null
   size?: string
+  /**
+   * Ya no se usa: el respaldo era texto con iniciales y ahora es una imagen.
+   * Se mantiene declarada porque cinco llamadas siguen pasando `text-size`, y
+   * una prop no declarada se colaría al DOM como atributo suelto. Quitarla
+   * obliga a tocar esas cinco páginas, varias en manos de otra rama.
+   */
   textSize?: string
 }>()
 
 const lightboxOpen = ref(false)
 
-const initials = computed(() =>
-  props.name
-    .split(' ')
-    .filter(Boolean)
-    .map(n => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
-)
+/**
+ * Avatar generado para quien no ha subido foto. Determinista: el mismo nombre
+ * da siempre la misma imagen, así que sirve para reconocer a alguien de una
+ * fila a otra.
+ *
+ * En `computed` y no en el template a propósito: ronda los 3 kB por avatar y en
+ * una tabla larga no conviene recalcularlo en cada render.
+ */
+const fallbackAvatar = computed(() => generatedAvatarUri(props.name))
 
 const sizeClass = computed(() => props.size ?? 'w-8 h-8')
-const textSizeClass = computed(() => props.textSize ?? 'text-[10px]')
 </script>
 
 <template>
@@ -36,13 +42,18 @@ const textSizeClass = computed(() => props.textSize ?? 'text-[10px]')
       :alt="name"
       class="h-full w-full object-cover"
     />
-    <div
+    <!--
+      Sin foto: avatar generado del nombre. El `alt` se deja vacío porque la
+      imagen no aporta información propia — el nombre ya está en la fila, y
+      leerlo dos veces solo estorba a quien use lector de pantalla.
+    -->
+    <img
       v-else
-      class="h-full w-full flex items-center justify-center font-bold text-zinc-700 dark:text-zinc-300"
-      :class="textSizeClass"
-    >
-      {{ initials }}
-    </div>
+      :src="fallbackAvatar"
+      alt=""
+      aria-hidden="true"
+      class="h-full w-full object-cover"
+    />
     <div
       v-if="avatarUrl"
       class="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
