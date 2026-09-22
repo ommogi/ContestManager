@@ -73,7 +73,14 @@ export const useContestStore = defineStore('contest', () => {
   async function createCategory(name: string, extra: Partial<Category> = {}) {
     const contestId = contestsStore.current?.id
     if (!contestId) return
-    return categoriesStore.create(contestId, { name, ...extra, contest_id: contestId })
+    const data = await categoriesStore.create(contestId, { name, ...extra, contest_id: contestId })
+    // KAN-26: the category may have been born with its rounds. Whoever is
+    // looking at the contest must see them without a reload.
+    if ((data as any)?.rounds?.length) {
+      roundsStore.invalidate(contestId)
+      await roundsStore.fetch(contestId)
+    }
+    return data
   }
 
   async function updateCategory(id: string, payload: Partial<Category>) {
@@ -125,13 +132,20 @@ export const useContestStore = defineStore('contest', () => {
 
   async function createRound(categoryId: string, name: string, order: number) {
     // KAN-23: no scoring_type here — the server takes it from the contest.
-    const data = await roundsStore.createForCategory(categoryId, { name, order, status: 'active' })
+    // No status either: the endpoint does not accept one, and a round is born
+    // a draft until someone starts it (KAN-26).
+    const data = await roundsStore.createForCategory(categoryId, { name, order })
     const contestId = contestsStore.current?.id
     if (contestId) {
       roundsStore.invalidate(contestId)
       await roundsStore.fetch(contestId)
     }
     return data
+  }
+
+  /** KAN-26: the planned names are defaults, not decisions. */
+  async function renameRound(roundId: string, name: string) {
+    return roundsStore.update(roundId, { name })
   }
 
   async function deleteRound(roundId: string) {
@@ -213,6 +227,7 @@ export const useContestStore = defineStore('contest', () => {
     fetchRoundSummary,
     startRound,
     createRound,
+    renameRound,
     deleteRound,
     promoteParticipants,
     removeMember,

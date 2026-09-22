@@ -73,6 +73,12 @@ const isCreatingRound = ref(false)
 const newRoundName = ref('')
 
 const categoryRounds = computed(() => rounds.value.filter(r => r.category_id === categoryId).sort((a, b) => a.order - b.order))
+
+// KAN-26: a category can now be born with its rounds already drafted, so
+// "nothing has happened yet" is no longer "there are no rounds" — it is that
+// none of them has been started.
+const plannedRounds = computed(() => categoryRounds.value.filter(r => r.status === 'pending'))
+const hasStartedRounds = computed(() => categoryRounds.value.some(r => r.status !== 'pending'))
 const categoryJudges = computed(() => members.value.filter(m => m.role === 'judge') as any[])
 const categoryParticipants = computed(() => participants.value?.filter(p => p.category_id === categoryId) || [])
 
@@ -216,13 +222,21 @@ const copyRegistrationLink = () => {
 
 const handleStartCategory = async () => {
   try {
-    const data = await contestStore.createRound(categoryId, 'Ronda 1', 1) as any
-    if (!data) return
-    await apiClient(`/api/rounds/${data.id}/participants/bulk`, {
+    // If the rounds were planned when the category was created (KAN-26), start
+    // the first one. Creating another "Ronda 1" beside them would be a round
+    // nobody asked for.
+    const planned = plannedRounds.value[0] as any
+    const created = planned ?? await contestStore.createRound(categoryId, 'Ronda 1', 1) as any
+    if (!created) return
+    const roundId = created.id
+    await apiClient(`/api/rounds/${roundId}/participants/bulk`, {
       method: 'POST', body: { participantIds: categoryParticipants.value.map(p => p.id) }
     })
+    // Started, not merely created: "Iniciar" has to leave the round open, or
+    // the category would sit in its setup phase for ever.
+    await contestStore.startRound(roundId)
     toast.success('Categoría iniciada')
-    router.push(`/contests/${route.params.slug}/categories/${categoryId}/rounds/${data.id}`)
+    router.push(`/contests/${route.params.slug}/categories/${categoryId}/rounds/${roundId}`)
   } catch (e) { toast.error('Error al iniciar') }
 }
 
@@ -314,6 +328,26 @@ async function confirmDeleteRound() {
     deletingRoundTarget.value = null
   }
 }
+// The names are only defaults, and the ticket asks for them to be editable.
+const renamingRoundId = ref<string | null>(null)
+const renameDraft = ref('')
+
+function startRenamingRound(round: any) {
+  renamingRoundId.value = round.id
+  renameDraft.value = round.name
+}
+
+async function saveRoundName(id: string) {
+  const name = renameDraft.value.trim()
+  renamingRoundId.value = null
+  const current = categoryRounds.value.find(r => r.id === id)
+  if (!name || name === current?.name) return
+  try {
+    await contestStore.renameRound(id, name)
+    toast.success('Ronda renombrada')
+  } catch (e) { toast.error('Error al renombrar') }
+}
+
 const handleCreateRound = async () => {
   if (!newRoundName.value.trim()) return
   try {
@@ -447,7 +481,7 @@ function roundStatusClass(status: string) {
             </div>
           </div>
           <p class="text-sm text-muted-foreground mt-1 max-w-2xl leading-relaxed">
-            {{ categoryRounds.length === 0 ? 'Fase de Inscripción y Preparación - Configura participantes y mesa de jurado.' : 'Categoría en Curso - Evaluación por Rondas operativas.' }}
+            {{ !hasStartedRounds ? 'Fase de Inscripción y Preparación - Configura participantes y mesa de jurado.' : 'Categoría en Curso - Evaluación por Rondas operativas.' }}
           </p>
         </div>
       </div>
@@ -458,12 +492,12 @@ function roundStatusClass(status: string) {
           <div class="flex items-center gap-1.5 opacity-70 hover:opacity-100 transition-opacity">
             <Layers class="w-3.5 h-3.5" />
             <span>Fases:</span>
-            <span class="text-zinc-900 dark:text-zinc-300">{{ categoryRounds.length }} / {{ contestSettings.rounds_count }}</span>
+            <span class="text-zinc-900 dark:text-zinc-300">{{ categoryRounds.length || contestSettings.rounds_count }}</span>
           </div>
           <div class="flex items-center gap-1.5 opacity-70 hover:opacity-100 transition-opacity">
             <Trophy class="w-3.5 h-3.5" />
             <span>Estado:</span>
-            <span class="text-zinc-900 dark:text-zinc-300">{{ categoryRounds.length === 0 ? 'INSCRIPCIÓN' : 'EJECUCIÓN' }}</span>
+            <span class="text-zinc-900 dark:text-zinc-300">{{ !hasStartedRounds ? 'INSCRIPCIÓN' : 'EJECUCIÓN' }}</span>
           </div>
         </div>
 
@@ -480,7 +514,7 @@ function roundStatusClass(status: string) {
     </div>
 
     <!-- PHASE 1: SETUP -->
-    <div v-if="categoryRounds.length === 0" class="space-y-8 animate-in fade-in slide-in-from-top-10 duration-700">
+    <div v-if="!hasStartedRounds" class="space-y-8 animate-in fade-in slide-in-from-top-10 duration-700">
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
         <!-- Participants Table (Left: 7/12) -->
         <div class="lg:col-span-7 flex flex-col">
@@ -629,6 +663,85 @@ function roundStatusClass(status: string) {
           </Card>
         </div>
       </div>
+
+      <!-- Planned rounds (KAN-26): drafted with the category, renameable until
+           the first one starts. -->
+      <Card class="border-2 border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-950/50 shadow-sm rounded-2xl">
+        <CardHeader class="pb-3">
+          <CardTitle class="text-sm font-bold uppercase tracking-tighter flex items-center gap-2">
+            <Layers class="w-4 h-4 text-zinc-500" />
+            Rondas previstas
+          </CardTitle>
+          <CardDescription class="text-xs">
+            {{ plannedRounds.length
+              ? 'En borrador. Renómbralas o ajusta cuántas hay antes de empezar.'
+              : 'Aún no hay ninguna. Al iniciar se creará la primera.' }}
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-2">
+          <div
+            v-for="(round, index) in plannedRounds"
+            :key="round.id"
+            class="flex items-center gap-3 rounded-lg border-2 border-zinc-100 dark:border-zinc-800 px-3 py-2"
+          >
+            <span class="w-6 text-center text-xs font-black text-zinc-400 tabular-nums">{{ index + 1 }}</span>
+            <Input
+              v-if="renamingRoundId === round.id"
+              v-model="renameDraft"
+              class="h-8 text-sm"
+              autofocus
+              @keyup.enter="saveRoundName(round.id)"
+              @keyup.esc="renamingRoundId = null"
+              @blur="saveRoundName(round.id)"
+            />
+            <span v-else class="flex-1 text-sm font-bold">{{ round.name }}</span>
+            <Badge v-if="renamingRoundId !== round.id" variant="outline" class="text-[10px] font-bold border-2 rounded-md">
+              Borrador
+            </Badge>
+            <Button
+              v-if="renamingRoundId !== round.id"
+              variant="ghost"
+              size="icon"
+              class="h-7 w-7 text-muted-foreground hover:text-foreground"
+              aria-label="Renombrar ronda"
+              @click="startRenamingRound(round)"
+            >
+              <Pencil class="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              v-if="renamingRoundId !== round.id && round.id === categoryRounds[categoryRounds.length - 1]?.id"
+              variant="ghost"
+              size="icon"
+              class="h-7 w-7 text-muted-foreground hover:text-red-500"
+              aria-label="Eliminar ronda"
+              @click="requestDeleteRound(round.id)"
+            >
+              <Trash2 class="w-3.5 h-3.5" />
+            </Button>
+          </div>
+
+          <div v-if="isCreatingRound" class="flex items-center gap-2">
+            <Input
+              v-model="newRoundName"
+              placeholder="Nombre de la ronda"
+              class="h-8 text-sm"
+              @keyup.enter="handleCreateRound"
+            />
+            <Button size="sm" class="h-8" :disabled="!newRoundName.trim()" @click="handleCreateRound">Añadir</Button>
+            <Button size="sm" variant="ghost" class="h-8" @click="isCreatingRound = false">Cancelar</Button>
+          </div>
+          <Button
+            v-else
+            variant="outline"
+            size="sm"
+            class="gap-1.5 text-[11px] font-bold uppercase tracking-wider"
+            @click="newRoundName = ''; isCreatingRound = true"
+          >
+            <Plus class="w-3.5 h-3.5" />
+            Añadir ronda
+          </Button>
+        </CardContent>
+      </Card>
 
       <div class="flex flex-col items-center justify-center pt-16 border-t-2 border-dashed border-zinc-100 dark:border-zinc-800 gap-3">
         <MotionButton
