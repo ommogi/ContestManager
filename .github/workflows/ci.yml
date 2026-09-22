@@ -1,0 +1,72 @@
+# Puerta de calidad del repositorio.
+#
+# ── Por qué existe ──────────────────────────────────────────────────────────
+# `main` estuvo días con 10 ficheros de test que no cargaban — 275 tests
+# desaparecidos de la cuenta — por un import que faltaba en
+# `server/utils/schemas.ts`. El build seguía verde, porque los auto-imports de
+# Nitro tapaban el hueco al compilar y solo vitest lo notaba.
+#
+# Nadie lo vio porque no había nada que ejecutara la suite, y cuando se
+# ejecutaba a mano el resumen engañaba: un `Test Files 10 failed` se va por
+# arriba mientras el `Tests 526 passed` en verde se queda a la vista.
+#
+# No hace falta ningún invento para cazarlo: `vitest run` ya sale con código
+# distinto de cero cuando un fichero no carga. Solo faltaba que algo lo
+# ejecutara.
+#
+# ── Sin secretos, a propósito ───────────────────────────────────────────────
+# Comprobado antes de escribir esto: los tres pasos pasan con el `.env` fuera
+# del alcance, que es la condición de un runner limpio. Todos los `process.env`
+# de `nuxt.config.ts` llevan `|| ''`, así que el build compone su CSP sin el
+# origen de Supabase y termina igual. Este artefacto no se despliega: su único
+# trabajo es fallar cuando algo está roto.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # En `push` además de en `pull_request`, y no por simetría: el fallo que
+  # motivó este fichero entró POR UN MERGE. Un CI que solo mira PRs no habría
+  # avisado de que `main` quedaba roto.
+  push:
+    branches: [main]
+
+# Un push nuevo sobre la misma rama cancela la ejecución anterior: gastar
+# minutos en validar un commit ya sustituido no dice nada útil.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Fijado a la versión con la que se desarrolla, no a la LTS por
+          # costumbre. Si el CI corriera con otra, un fallo podría aparecer en
+          # un sitio y no en el otro — justo la divergencia que vuelve inútil
+          # tener CI.
+          node-version: '24'
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      # Primero los tests: son el paso rápido y el que motivó este workflow.
+      #
+      # Ninguno de los tres pasos lleva `continue-on-error` ni `|| true`. Un CI
+      # que no puede fallar es peor que no tenerlo, porque da confianza sin
+      # respaldarla.
+      - name: Tests
+        run: npm run test
+
+      - name: Comprobación de tipos
+        run: npx vue-tsc --noEmit -p tsconfig.json
+
+      - name: Build
+        run: npm run build
