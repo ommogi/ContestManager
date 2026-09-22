@@ -3,9 +3,9 @@ import { ref, computed, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { Eye, EyeOff, Loader2, Zap } from 'lucide-vue-next'
 import {
-import { BRAND_LOGO_URL } from '~~/shared/brand-assets'
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select'
+import { BRAND_LOGO_URL } from '~~/shared/brand-assets'
 
 const passwordStrength = computed(() => {
   if (!password.value) return { percent: 0, color: '', text: '' }
