@@ -65,8 +65,17 @@ jobs:
       - name: Tests
         run: npm run test
 
+      # `npm run typecheck`, nunca `npx vue-tsc`. La primera versión de este
+      # workflow usaba npx y falló aquí: `vue-tsc` no era dependencia del
+      # proyecto, así que npx se bajaba una copia suelta que arrastraba su
+      # propio TypeScript y reventaba con ERR_PACKAGE_PATH_NOT_EXPORTED.
+      #
+      # En local pasaba porque npx tenía una copia en caché — es decir, el
+      # typecheck daba resultados distintos según la máquina, que es
+      # exactamente lo que un CI debe eliminar. Ahora ambas herramientas están
+      # declaradas y fijadas en `package.json`.
       - name: Comprobación de tipos
-        run: npx vue-tsc --noEmit -p tsconfig.json
+        run: npm run typecheck
 
       - name: Build
         run: npm run build
