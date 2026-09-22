@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { CalendarClock, Tag, Trash, AlertTriangle } from 'lucide-vue-next'
 import { getStatusBannerClasses } from '@/utils/styles'
 import {
-import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -17,6 +16,7 @@ import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
 
 
 const props = withDefaults(defineProps<{
