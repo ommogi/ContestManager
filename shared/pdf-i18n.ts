@@ -34,6 +34,11 @@ const es = {
   noRepertoire: 'Sin repertorio registrado.',
   total: 'Total',
   notes: 'Anotaciones',
+  publicProgramTitle: 'Programa',
+  work: 'Obra',
+  performances: 'actuaciones',
+  noPerformances: 'No hay actuaciones programadas.',
+  unscheduledNote: '{count} participante(s) todavía sin horario, fuera de este programa.',
 }
 
 export type PdfStrings = typeof es
@@ -60,6 +65,11 @@ const ca: PdfStrings = {
   noRepertoire: 'Sense repertori registrat.',
   total: 'Total',
   notes: 'Anotacions',
+  publicProgramTitle: 'Programa',
+  work: 'Obra',
+  performances: 'actuacions',
+  noPerformances: 'No hi ha actuacions programades.',
+  unscheduledNote: '{count} participant(s) encara sense horari, fora d’aquest programa.',
 }
 
 export const PDF_STRINGS: Record<PdfLocale, PdfStrings> = { es, ca }
