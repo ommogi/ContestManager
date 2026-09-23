@@ -16,6 +16,8 @@ import CountrySelect from '@/components/ui/country-select/CountrySelect.vue'
 import PhoneInput from '@/components/ui/phone-input/PhoneInput.vue'
 import { validateDni, detectIdKind } from '@/utils/dni'
 import { resizeImageFile, AVATAR_POLICY } from '@/utils/image-resize'
+// Explícito y no por auto-import, como el resto de lo que viene de shared/.
+import { generatedAvatarUri } from '~~/shared/avatar'
 import { PDF_LOCALES, PDF_LOCALE_LABELS, resolveLocale, type PdfLocale } from '~~/shared/pdf-i18n'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ORG_NOTIFICATION_EVENTS, type OrgNotificationEvent } from '~~/shared/org-notifications'
@@ -116,6 +118,10 @@ watch(profile, (p) => {
     profileForm.value.birthdate  = (p as any).birthdate ?? ''
   }
 })
+
+// Avatar generado mientras no haya foto ni vista previa. Se calcula desde el
+// mismo nombre que se está editando, así que cambia con él.
+const generatedAvatar = computed(() => generatedAvatarUri(profileForm.value?.full_name ?? ''))
 
 // DNI/Pasaporte toggle + validation
 const idKind = ref<'dni' | 'passport'>(detectIdKind((profile.value as any)?.dni))
@@ -357,7 +363,7 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
               @click="avatarPreview ? lightboxOpen = true : avatarInput?.click()"
             >
               <Avatar class="h-16 w-16 rounded-xl border-2 border-border shadow-sm">
-                <AvatarImage :src="avatarPreview ?? ''" />
+                <AvatarImage :src="avatarPreview ?? generatedAvatar" />
                 <AvatarFallback class="rounded-xl text-lg font-bold bg-zinc-100 dark:bg-zinc-800">
                   {{ initials }}
                 </AvatarFallback>
@@ -399,7 +405,7 @@ const tab = ref<'profile' | 'org' | 'security'>('profile')
                 @click="lightboxOpen = false"
               >
                 <img
-                  :src="avatarPreview ?? ''"
+                  :src="avatarPreview ?? generatedAvatar"
                   :alt="displayName"
                   class="rounded-2xl max-w-[320px] max-h-[320px] object-cover shadow-2xl"
                   @click.stop
