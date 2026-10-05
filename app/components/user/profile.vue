@@ -14,12 +14,19 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+// Explícito, nunca por auto-import: fiarse del auto-import de Nitro es lo que
+// dejó 10 ficheros de test sin cargar en `server/utils/schemas.ts`.
+import { generatedAvatarUri } from '~~/shared/avatar'
 
 const authStore = useAuthStore()
 const router = useRouter()
 const colorMode = useColorMode()
 
 const { displayName, initials, profile, isOrgOwner, user } = storeToRefs(authStore)
+
+// Avatar generado del nombre para quien no ha subido foto. Entra por `src`,
+// de modo que el slot de iniciales queda como último recurso de verdad.
+const generatedAvatar = computed(() => generatedAvatarUri(displayName.value ?? ''))
 
 const handleSignOut = async () => {
   await authStore.signOut()
@@ -37,7 +44,7 @@ const handleSignOut = async () => {
         class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground shadow-sm border border-border/50 bg-card transition-all group-data-[collapsible=icon]:justify-center"
       >
         <Avatar class="h-8 w-8 rounded-lg">
-          <AvatarImage :src="profile?.avatar_url || ''" :alt="displayName" />
+          <AvatarImage :src="profile?.avatar_url || generatedAvatar" :alt="displayName" />
           <AvatarFallback class="rounded-lg">{{ initials }}</AvatarFallback>
         </Avatar>
         <div class="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden overflow-hidden">
@@ -59,7 +66,7 @@ const handleSignOut = async () => {
       <!-- User info header -->
       <div class="flex items-center gap-3 px-3 py-2.5 mb-1">
         <Avatar class="h-9 w-9 rounded-lg shrink-0">
-          <AvatarImage :src="profile?.avatar_url || ''" :alt="displayName" />
+          <AvatarImage :src="profile?.avatar_url || generatedAvatar" :alt="displayName" />
           <AvatarFallback class="rounded-lg text-sm">{{ initials }}</AvatarFallback>
         </Avatar>
         <div class="min-w-0">
