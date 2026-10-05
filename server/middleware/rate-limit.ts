@@ -18,11 +18,9 @@ const PUBLIC_MAX = 30    // public endpoints (enrollment, checkout)
 const AUTH_MAX = 20      // auth endpoints — raised from 10 to avoid blocking admins
 const WEBHOOK_MAX = 60   // stripe webhook
 const FINANCIAL_MAX = 10 // billing and refund endpoints
-const AI_MAX = 5         // AI proposals (KAN-85): every call is paid per token
 
 export function getLimit(path: string): number {
   if (path.startsWith('/api/stripe/webhook')) return WEBHOOK_MAX
-  if (path.includes('.ai-draft')) return AI_MAX
   if (path.startsWith('/api/auth/')) return AUTH_MAX
   if (path.startsWith('/api/public/')) return PUBLIC_MAX
   // Read-only billing endpoints are polled by the app shell on every page load,

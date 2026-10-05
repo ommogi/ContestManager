@@ -34,9 +34,6 @@ describe('getLimit', () => {
     expect(getLimit('/api/participants/uuid-123/refund')).toBe(10)
     expect(getLimit('/api/participants/uuid-123/cancel')).toBe(10)
   })
-  it('AI proposal endpoints return 5', () => {
-    expect(getLimit('/api/contests/uuid-123/form-schema.ai-draft')).toBe(5)
-  })
   it('general API returns 120', () => {
     expect(getLimit('/api/contests')).toBe(120)
   })

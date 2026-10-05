@@ -2,13 +2,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { toast } from 'vue-sonner'
-import { CheckCircle2, FileWarning, Loader2, Lock, Send, ShieldAlert, Sparkles } from 'lucide-vue-next'
+import { CheckCircle2, FileWarning, Loader2, Lock, Send, ShieldAlert } from 'lucide-vue-next'
 import type { FormField, FormResponses } from '~/types/inscription-form'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/api/apiClient'
 import FormBuilder from '@/components/inscription/FormBuilder.vue'
 import DynamicFormRenderer from '@/components/inscription/DynamicFormRenderer.vue'
@@ -97,8 +95,8 @@ async function load() {
   }
 }
 
-async function handleSave(fields: FormField[]): Promise<boolean> {
-  if (props.locked) return false
+async function handleSave(fields: FormField[]) {
+  if (props.locked) return
   saving.value = true
   try {
     const row = await apiClient<FormSchemaRow>(
@@ -108,10 +106,8 @@ async function handleSave(fields: FormField[]): Promise<boolean> {
     schema.value = row
     builderFields.value = row.schema_json ?? []
     toast.success(`Formulario guardado · versión ${row.version}`)
-    return true
   } catch (error) {
     toast.error(errorMessage(error, 'No se pudo guardar el formulario'))
-    return false
   } finally {
     saving.value = false
   }
@@ -145,58 +141,6 @@ async function handlePublish() {
   } finally {
     publishing.value = false
   }
-}
-
-// ── AI proposal (KAN-86) ────────────────────────────────────────────────────
-// The server proposes and saves nothing. Accepting goes through handleSave, so
-// the proposal lands as a new unpublished version the organiser can still edit,
-// and the dirty/publish guards above keep working as they do for manual edits.
-const aiOpen = ref(false)
-const aiLoading = ref(false)
-const aiRulesText = ref('')
-const aiProposal = ref<FormField[] | null>(null)
-const aiNotes = ref<string | null>(null)
-
-const TYPE_LABELS: Record<string, string> = {
-  text: 'Texto', textarea: 'Texto largo', number: 'Número', date: 'Fecha', url: 'Enlace',
-  email: 'Email', phone: 'Teléfono', select: 'Desplegable', radio: 'Opción única',
-  checkbox: 'Casilla', 'checkbox-group': 'Varias opciones', file: 'Archivo',
-}
-
-function openAi() {
-  aiProposal.value = null
-  aiNotes.value = null
-  aiOpen.value = true
-}
-
-async function requestAiDraft() {
-  aiLoading.value = true
-  try {
-    const res = await apiClient<{ fields: FormField[], notes: string | null }>(
-      `/api/contests/${props.contestId}/form-schema.ai-draft`,
-      { method: 'POST', body: { rulesText: aiRulesText.value } }
-    )
-    aiProposal.value = res.fields
-    aiNotes.value = res.notes
-  } catch (error) {
-    toast.error(errorMessage(error, 'La IA no ha podido proponer el formulario'))
-  } finally {
-    aiLoading.value = false
-  }
-}
-
-async function applyAiDraft(mode: 'append' | 'replace') {
-  if (!aiProposal.value) return
-  const kept = mode === 'append'
-    ? builderFields.value
-    : builderFields.value.filter(f => f.isCore)
-  const offset = kept.length
-  const fields = [
-    ...kept,
-    ...aiProposal.value.map((f, i) => ({ ...f, order: offset + i })),
-  ]
-  // A failed save keeps the dialog open so the proposal is not lost.
-  if (await handleSave(fields)) aiOpen.value = false
 }
 
 function handlePreview(fields: FormField[]) {
@@ -257,31 +201,16 @@ onMounted(load)
               </p>
             </div>
 
-            <div class="flex items-center gap-2">
-              <!-- Disabled with unsaved edits: accepting a proposal saves, and
-                   would build on the last saved version, silently dropping them. -->
-              <Button
-                size="sm"
-                variant="outline"
-                class="gap-2 font-bold uppercase tracking-widest text-[10px]"
-                :disabled="locked || busy || isDirty"
-                :title="isDirty ? 'Guarda los cambios antes de usar la IA' : undefined"
-                @click="openAi"
-              >
-                <Sparkles class="w-3.5 h-3.5" />
-                Proponer con IA
-              </Button>
-              <Button
-                size="sm"
-                class="gap-2 font-bold uppercase tracking-widest text-[10px]"
-                :disabled="locked || busy || !hasSavedSchema"
-                @click="handlePublish"
-              >
-                <Loader2 v-if="publishing" class="w-3.5 h-3.5 animate-spin" />
-                <Send v-else class="w-3.5 h-3.5" />
-                Publicar
-              </Button>
-            </div>
+            <Button
+              size="sm"
+              class="gap-2 font-bold uppercase tracking-widest text-[10px]"
+              :disabled="locked || busy || !hasSavedSchema"
+              @click="handlePublish"
+            >
+              <Loader2 v-if="publishing" class="w-3.5 h-3.5 animate-spin" />
+              <Send v-else class="w-3.5 h-3.5" />
+              Publicar
+            </Button>
           </div>
         </CardHeader>
 
@@ -347,79 +276,6 @@ onMounted(load)
           />
         </CardContent>
       </Card>
-
-      <!-- AI proposal -->
-      <Dialog v-model:open="aiOpen">
-        <DialogContent class="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle class="flex items-center gap-2">
-              <Sparkles class="w-4 h-4" />
-              Proponer el formulario con IA
-            </DialogTitle>
-            <DialogDescription>
-              La IA lee las bases y propone los campos personalizados. Nombre, apellidos, fecha de nacimiento, DNI, país, teléfono y email ya están siempre en el formulario. Nada se publica: la propuesta se guarda como borrador y puedes editarla.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div v-if="!aiProposal" class="space-y-2">
-            <Textarea
-              v-model="aiRulesText"
-              rows="8"
-              placeholder="Pega aquí las bases. Si lo dejas vacío se usan las bases guardadas en el concurso."
-              :disabled="aiLoading"
-            />
-          </div>
-
-          <div v-else class="space-y-3">
-            <ul class="divide-y rounded-xl border-2">
-              <li v-for="f in aiProposal" :key="f.id" class="px-4 py-2.5 flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <p class="text-sm font-semibold">
-                    {{ f.label }}<span v-if="f.required" class="text-destructive"> *</span>
-                  </p>
-                  <p v-if="'options' in f && f.options?.length" class="text-xs text-muted-foreground truncate">
-                    {{ f.options.map(o => o.label).join(' · ') }}
-                  </p>
-                  <p v-else-if="f.description" class="text-xs text-muted-foreground">
-                    {{ f.description }}
-                  </p>
-                </div>
-                <Badge variant="secondary" class="shrink-0 text-[10px]">
-                  {{ TYPE_LABELS[f.type] ?? f.type }}
-                </Badge>
-              </li>
-            </ul>
-            <p v-if="aiNotes" class="rounded-xl border-2 border-dashed px-4 py-3 text-xs text-muted-foreground">
-              {{ aiNotes }}
-            </p>
-          </div>
-
-          <DialogFooter class="gap-2">
-            <template v-if="!aiProposal">
-              <Button variant="ghost" :disabled="aiLoading" @click="aiOpen = false">
-                Cancelar
-              </Button>
-              <Button class="gap-2" :disabled="aiLoading" @click="requestAiDraft">
-                <Loader2 v-if="aiLoading" class="w-4 h-4 animate-spin" />
-                <Sparkles v-else class="w-4 h-4" />
-                {{ aiLoading ? 'Leyendo las bases…' : 'Proponer campos' }}
-              </Button>
-            </template>
-            <template v-else>
-              <Button variant="ghost" :disabled="saving" @click="aiProposal = null">
-                Volver
-              </Button>
-              <Button variant="outline" :disabled="saving" @click="applyAiDraft('replace')">
-                Sustituir los personalizados
-              </Button>
-              <Button class="gap-2" :disabled="saving" @click="applyAiDraft('append')">
-                <Loader2 v-if="saving" class="w-4 h-4 animate-spin" />
-                Añadir al formulario
-              </Button>
-            </template>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </template>
   </div>
 </template>

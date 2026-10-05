@@ -16,7 +16,6 @@
     "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0",
     "@dicebear/core": "^10.7.0",
     "@dicebear/styles": "^10.6.0",
     "@internationalized/date": "^3.12.0",
