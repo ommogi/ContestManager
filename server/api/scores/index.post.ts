@@ -1,5 +1,11 @@
 import { defineEventHandler, createError, readBody } from 'h3'
-import { serverSupabaseAdmin, requireAuth, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import {
+  serverSupabaseAdmin,
+  requireAuth,
+  requireContestOrganizer,
+  requireContestJudgeOrOrganizer,
+  internalError,
+} from '~~/server/utils/supabase'
 import { ScoreBodySchema } from '~~/server/utils/schemas'
 import { checkScoreSubmission } from '~~/shared/voting'
 
@@ -37,22 +43,34 @@ export default defineEventHandler(async (event) => {
     return category.contest_id as string
   }
 
-  // Auth gate: if judge_id doesn't match the authenticated user,
-  // require org owner or accepted contest member of the contest (admin override)
+  // Auth gate. Before this, a judge could score in another judge's name (the
+  // "admin override" only asked for any contest member) and score in a closed
+  // round, and any signed-in user could score any open round under their own
+  // id, since membership was never checked on that path.
+  //   * Scoring for someone else is the organiser's override, never a judge's.
+  //   * Scoring as oneself needs to be a judge (or organiser) of this contest.
+  //   * Outside an open round only the organiser may write; a judge gets the
+  //     round's own reason from checkScoreSubmission below.
   let isAdminAction = false
   if (judge_id !== user.id) {
-    await requireOrgOwnerOrMember(event, await contestId())
+    await requireContestOrganizer(event, await contestId())
     isAdminAction = true
-  } else if (round.status !== 'active') {
-    // Writing one's own score outside an open round is a judge's mistake but an
-    // organiser's job — an owner who also sits on the jury corrects their own
-    // row like any other. Only asked here, so the ordinary path stays one query.
-    try {
-      await requireOrgOwnerOrMember(event, await contestId())
-      isAdminAction = true
-    } catch {
-      // Not an organiser: the guard below answers with the round's own reason.
-    }
+  } else {
+    const access = await requireContestJudgeOrOrganizer(event, await contestId())
+    const isOrganizer = !access.member || access.member.role === 'organizer'
+    if (round.status !== 'active' && isOrganizer) isAdminAction = true
+  }
+
+  // The participant must be in this round, or a score could be pinned on
+  // someone from another round or contest.
+  const { data: inRound } = await client
+    .from('round_participants')
+    .select('id')
+    .eq('round_id', round_id)
+    .eq('participant_id', participant_id)
+    .maybeSingle()
+  if (!inRound) {
+    throw createError({ statusCode: 404, statusMessage: 'participant_not_in_round' })
   }
 
   const check = checkScoreSubmission({

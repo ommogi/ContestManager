@@ -6,7 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { getAnthropic, aiModel } from '~~/server/utils/ai'
 import { AiFormDraftSchema, draftFormFromRules, MAX_RULES_CHARS, type AiDraftCall } from '~~/server/utils/ai-form-draft'
 import type { FormField } from '~~/shared/inscription-form'
@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
   if (!contestId) throw createError({ statusCode: 400, statusMessage: 'Missing contest ID' })
 
-  await requireOrgOwnerOrMember(event, contestId)
+  await requireContestOrganizer(event, contestId)
 
   const anthropic = getAnthropic()
   if (!anthropic) {

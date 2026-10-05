@@ -115,6 +115,36 @@ describe('requireContestOrganizer', () => {
   })
 })
 
+describe('requireContestJudgeOrOrganizer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+  })
+
+  async function gate(opts: Parameters<typeof createAdminStub>[0]) {
+    const { createClient } = await import('@supabase/supabase-js')
+    vi.mocked(createClient).mockReturnValue(createAdminStub(opts) as any)
+    const { requireContestJudgeOrOrganizer } = await import('./supabase')
+    return requireContestJudgeOrOrganizer(mockEvent({ id: 'u1', email: 'u1@example.com' }), 'c1')
+  }
+
+  it('lets the owner through', async () => {
+    await expect(gate({ ownedOrgIds: ['org-1'] })).resolves.toMatchObject({ org: { id: 'org-1' } })
+  })
+
+  it.each(['organizer', 'judge'])('lets an accepted %s through', async (role) => {
+    await expect(gate({ memberById: { id: 'm1', role } })).resolves.toMatchObject({ member: { role } })
+  })
+
+  it('refuses a viewer with 403', async () => {
+    await expect(gate({ memberById: { id: 'm1', role: 'viewer' } })).rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('refuses someone who is not a member with 403', async () => {
+    await expect(gate({})).rejects.toMatchObject({ statusCode: 403 })
+  })
+})
+
 describe('requireOrgOwnerOrMember', () => {
   beforeEach(() => {
     vi.clearAllMocks()

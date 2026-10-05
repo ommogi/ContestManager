@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { RoundCreateSchema } from '~~/server/utils/schemas'
 import { scoringTypeFor } from '~~/shared/voting'
 
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', categoryId)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  await requireContestOrganizer(event, category.contest_id)
 
   const rawBody = await readBody(event)
   const parsed = RoundCreateSchema.safeParse(rawBody)

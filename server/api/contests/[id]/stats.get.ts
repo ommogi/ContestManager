@@ -1,12 +1,12 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing ID' })
 
-  // Auth gate — require org owner or contest member
-  await requireOrgOwnerOrMember(event, id)
+  // Auth gate — organisers only (not judges or viewers)
+  await requireContestOrganizer(event, id)
 
   const client = serverSupabaseAdmin()
 

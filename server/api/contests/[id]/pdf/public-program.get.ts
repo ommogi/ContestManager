@@ -9,7 +9,7 @@
 // choosing what is played, a programme with the works printed could not be
 // published, and this is what keeps the document usable either way.
 import { defineEventHandler, createError, getRouterParam, getQuery } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestJudgeOrOrganizer, internalError } from '~~/server/utils/supabase'
 import { createDocument } from '~~/server/utils/pdf/document'
 import { pdfFilename, sendPdf } from '~~/server/utils/pdf/response'
 import { loadProgramSources } from '~~/server/services/public-program'
@@ -34,10 +34,7 @@ export default defineEventHandler(async (event) => {
   }
   const includeWorks = query.works !== '0' && query.works !== 'false'
 
-  const access = await requireOrgOwnerOrMember(event, contestId)
-  if (access.member && !['organizer', 'judge'].includes(access.member.role)) {
-    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
-  }
+  await requireContestJudgeOrOrganizer(event, contestId)
 
   const admin = serverSupabaseAdmin()
 

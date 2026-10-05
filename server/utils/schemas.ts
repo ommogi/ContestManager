@@ -301,7 +301,10 @@ export const ParticipantCreateSchema = z.object({
 export const ContestMemberSchema = z.object({
   full_name: z.string().min(1).max(200).optional(),
   email: emailString.optional(),
-  role: z.enum(['judge', 'viewer', 'staff']).optional(),
+  // Mirrors the contest_role enum minus `organizer`, which is not granted by
+  // invitation. `staff` was accepted here but never existed in the database,
+  // so it reached Postgres and came back as a 500.
+  role: z.enum(['judge', 'viewer']).optional(),
   user_id: uuidString.optional(),
 })
 

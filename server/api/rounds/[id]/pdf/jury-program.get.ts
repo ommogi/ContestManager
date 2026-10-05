@@ -7,7 +7,7 @@
 // refused.
 
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestJudgeOrOrganizer, internalError } from '~~/server/utils/supabase'
 import { createDocument } from '~~/server/utils/pdf/document'
 import { pdfFilename, sendPdf } from '~~/server/utils/pdf/response'
 import { buildJuryProgram, type JurySource } from '~~/server/utils/pdf/jury-program'
@@ -53,10 +53,7 @@ export default defineEventHandler(async (event) => {
   const category = round?.categories
   if (!round || !category?.contest_id) throw createError({ statusCode: 404, statusMessage: 'Round not found' })
 
-  const access = await requireOrgOwnerOrMember(event, category.contest_id)
-  if (access.member && !['organizer', 'judge'].includes(access.member.role)) {
-    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
-  }
+  await requireContestJudgeOrOrganizer(event, category.contest_id)
 
   const { data: rows, error: rowsError } = await admin
     .from('round_participants')

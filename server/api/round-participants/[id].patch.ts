@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { RoundParticipantPatchSchema } from '~~/server/utils/schemas'
 import { sendScheduleEmail } from '~~/server/utils/email'
 import { buildSlotUpdates } from '~~/server/utils/slot-edit'
@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', round.category_id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  await requireContestOrganizer(event, category.contest_id)
 
   // A closed round is locked (CLAUDE.md schema lock; KAN-15). Before this, a
   // closed round's schedule could still be rewritten from here.

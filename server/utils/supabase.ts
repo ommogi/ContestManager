@@ -283,3 +283,20 @@ export async function requireContestOrganizer(
   }
   return access
 }
+
+/**
+ * Organisers and judges: what the jury screens read — the ranking, the jury
+ * and public programmes, a round's running order. Viewers are refused.
+ * Never use it for writes or for participants' personal data: a judge must
+ * not edit the contest nor see a minor's DNI.
+ */
+export async function requireContestJudgeOrOrganizer(
+  event: H3Event,
+  contestId: string,
+): Promise<OrgOwnerOrMemberResult> {
+  const access = await requireOrgOwnerOrMember(event, contestId)
+  if (access.member && access.member.role !== 'organizer' && access.member.role !== 'judge') {
+    throw createError({ statusCode: 403, statusMessage: 'forbidden' })
+  }
+  return access
+}

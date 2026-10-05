@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { getPagination, paginationResponse } from '~~/server/utils/pagination'
 
 export default defineEventHandler(async (event) => {
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', round.category_id)
     .maybeSingle()
   if (!cat?.contest_id) throw internalError(event, 'round has no resolvable contest', 'rounds.select:contest_resolution')
-  await requireOrgOwnerOrMember(event, cat.contest_id)
+  await requireContestOrganizer(event, cat.contest_id)
 
   const { data, error, count } = await client
     .from('score_audit_logs')
