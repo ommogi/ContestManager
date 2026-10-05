@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { internalError, serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { internalError, serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { sendJudgeInvitationEmail } from '~~/server/utils/email'
 import { appBaseUrl } from '~~/server/utils/app-url'
 
@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing route params' })
   }
 
-  await requireOrgOwnerOrMember(event, contestId)
+  await requireContestOrganizer(event, contestId)
   const admin = serverSupabaseAdmin()
 
   const { data: member, error: memberErr } = await admin

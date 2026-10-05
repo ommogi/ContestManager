@@ -7,7 +7,7 @@
 //
 // ── Authorization ───────────────────────────────────────────────────────────
 // Two ways in, and no third: the participant themself, or an owner/member of
-// the contest the participant belongs to. `requireOrgOwnerOrMember` takes the
+// the contest the participant belongs to. `requireContestOrganizer` takes the
 // CONTEST id read from the participant row — not anything the caller sent — so
 // an authenticated stranger passing another participant's id gets 403, and one
 // passing a path belonging to a different contest gets 403 too, because the
@@ -16,7 +16,7 @@
 import { defineEventHandler, createError, getRouterParam, getQuery } from 'h3'
 import {
   requireAuth,
-  requireOrgOwnerOrMember,
+  requireContestOrganizer,
   serverSupabaseAdmin,
 } from '~~/server/utils/supabase'
 import {
@@ -62,7 +62,7 @@ export default defineEventHandler(async (event) => {
 
   // The participant reads their own attachment without an organizer gate.
   if (upload.user_id !== user.id) {
-    await requireOrgOwnerOrMember(event, upload.contest_id)
+    await requireContestOrganizer(event, upload.contest_id)
   }
 
   const signed = await client.storage

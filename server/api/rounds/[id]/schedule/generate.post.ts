@@ -9,7 +9,7 @@
 // whether to write it.
 
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { RoundScheduleGenerateSchema } from '~~/server/utils/schemas'
 import {
   applyRoundSchedule,
@@ -38,7 +38,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', round.category_id)
     .maybeSingle()
   if (!cat?.contest_id) throw internalError(event, 'round has no resolvable contest', 'rounds.select:contest_resolution')
-  await requireOrgOwnerOrMember(event, cat.contest_id)
+  await requireContestOrganizer(event, cat.contest_id)
 
   const parsed = RoundScheduleGenerateSchema.safeParse(await readBody(event))
   if (!parsed.success) {

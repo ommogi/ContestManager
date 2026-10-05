@@ -68,6 +68,8 @@ export default defineEventHandler(async (event) => {
         .eq('contest_id', contest.id)
         .eq('user_id', user.id)
         .eq('role', 'judge')
+        // A pending or rejected invitation is not a seat on the jury.
+        .eq('invitation_status', 'accepted')
         .maybeSingle(),
       user.email
         ? client
@@ -76,6 +78,7 @@ export default defineEventHandler(async (event) => {
             .eq('contest_id', contest.id)
             .eq('email', user.email)
             .eq('role', 'judge')
+            .eq('invitation_status', 'accepted')
             .is('user_id', null)
             .maybeSingle()
         : Promise.resolve({ data: null }),

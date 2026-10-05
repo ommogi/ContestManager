@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { CategoryPatchSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  await requireContestOrganizer(event, category.contest_id)
 
   // A closed category is locked: it cannot be reopened nor edited. Closing one
   // is still allowed — this only applies once it is already closed.

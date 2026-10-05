@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const client = serverSupabaseAdmin()
@@ -17,8 +17,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Categoría no encontrada' })
   }
 
-  // Auth gate — require org owner or contest member
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  // Auth gate — organisers only (not judges or viewers)
+  await requireContestOrganizer(event, category.contest_id)
 
   const contestStatus = category.contests?.status as string | undefined
   const orgId = category.contests?.organization_id as string | undefined

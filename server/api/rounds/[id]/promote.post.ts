@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { sendPromotionEmail } from '~~/server/utils/email'
 import { PromoteBodySchema } from '~~/server/utils/schemas'
 import { buildPromotionAuditRows } from '~~/server/utils/promotion-audit'
@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'round_already_closed' })
   }
 
-  // Auth gate: must be org owner or contest member
+  // Auth gate— organisers only (not judges or viewers)
   // Resolve contest_id from category to check ownership
   const { data: category } = await admin
     .from('categories')
@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', currentRound.category_id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  const { user } = await requireOrgOwnerOrMember(event, category.contest_id)
+  const { user } = await requireContestOrganizer(event, category.contest_id)
 
   // Validate participantIds belong to this round
   const { data: allRoundParts } = await admin

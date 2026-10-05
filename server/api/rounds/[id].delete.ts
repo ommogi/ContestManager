@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const client = serverSupabaseAdmin()
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', target.category_id)
     .maybeSingle()
   if (!cat?.contest_id) throw internalError(event, 'round has no resolvable contest', 'rounds.select:contest_resolution')
-  await requireOrgOwnerOrMember(event, cat.contest_id)
+  await requireContestOrganizer(event, cat.contest_id)
 
   // Max order in category
   const { data: siblings, error: sErr } = await client

@@ -1,13 +1,13 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseUser, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseUser, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { ImportBodySchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
   if (!contestId) throw createError({ statusCode: 400, statusMessage: 'Missing contest id' })
 
-  // Auth gate — require org owner or contest member
-  await requireOrgOwnerOrMember(event, contestId)
+  // Auth gate — organisers only (not judges or viewers)
+  await requireContestOrganizer(event, contestId)
 
   const rawBody = await readBody(event)
   const parsed = ImportBodySchema.safeParse(rawBody)

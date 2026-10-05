@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { ParticipantPatchSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
@@ -14,9 +14,9 @@ export default defineEventHandler(async (event) => {
     .eq('id', id)
     .single() as any
 
-  // Auth gate — require org owner or contest member
+  // Auth gate — organisers only (not judges or viewers)
   if (!row?.contest_id) throw createError({ statusCode: 404, statusMessage: 'participant_not_found' })
-  await requireOrgOwnerOrMember(event, row.contest_id)
+  await requireContestOrganizer(event, row.contest_id)
 
   const status = row?.contests?.status
   if (status && ['active','finished','cancelled'].includes(status)) {
