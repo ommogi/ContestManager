@@ -160,6 +160,8 @@ export function usesSharedStore(path: string): boolean {
       || path.startsWith('/api/billing/connect/status')
     return !readOnly
   }
+  // AI proposals cost money per call, so their cap must hold across instances.
+  if (path.includes('.ai-draft')) return true
   return path.includes('/refund') || path.includes('/cancel')
 }
 

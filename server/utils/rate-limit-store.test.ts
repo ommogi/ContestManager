@@ -136,6 +136,7 @@ describe('usesSharedStore', () => {
     expect(usesSharedStore('/api/billing/connect/onboard')).toBe(true)
     expect(usesSharedStore('/api/participants/abc/refund')).toBe(true)
     expect(usesSharedStore('/api/participants/abc/cancel')).toBe(true)
+    expect(usesSharedStore('/api/contests/abc/form-schema.ai-draft')).toBe(true)
   })
 
   // Polled by the app shell on every page load: a database write here would be
