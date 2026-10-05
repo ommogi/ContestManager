@@ -1,11 +1,11 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { getPagination, paginationResponse } from '~~/server/utils/pagination'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing contest ID' })
-  await requireOrgOwnerOrMember(event, id)
+  await requireContestOrganizer(event, id)
 
   const admin = serverSupabaseAdmin()
   const { page, limit, offset } = getPagination(event, 50, 100)

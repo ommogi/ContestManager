@@ -10,7 +10,7 @@
 // same RPC as the manual editor.
 
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { RoundDrawImportSchema } from '~~/server/utils/schemas'
 import { applyRoundDraw, RoundDrawError } from '~~/server/services/round-draw'
 import { matchDrawImport, type DrawCandidate } from '~~/shared/round-draw'
@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', round.category_id)
     .maybeSingle()
   if (!cat?.contest_id) throw internalError(event, 'round has no resolvable contest', 'rounds.select:contest_resolution')
-  await requireOrgOwnerOrMember(event, cat.contest_id)
+  await requireContestOrganizer(event, cat.contest_id)
 
   const parsed = RoundDrawImportSchema.safeParse(await readBody(event))
   if (!parsed.success) {

@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const client = serverSupabaseAdmin()
@@ -19,8 +19,8 @@ export default defineEventHandler(async (event) => {
   const contestId = (categories as { contest_id: string } | null | undefined)?.contest_id
   if (!contestId) throw internalError(event, 'round has no resolvable contest', 'rounds.select:contest_resolution')
 
-  // Auth gate — require org owner or contest member
-  await requireOrgOwnerOrMember(event, contestId)
+  // Auth gate — organisers only (not judges or viewers)
+  await requireContestOrganizer(event, contestId)
 
   // 2. Get judges with avatar_url via RPC (same logic as judge pool: email → auth.users → profiles)
   const { data: allMembers, error: judgesError } = await client

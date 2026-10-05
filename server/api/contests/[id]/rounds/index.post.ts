@@ -1,12 +1,12 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { RoundCreateSchema } from '~~/server/utils/schemas'
 import { scoringTypeFor } from '~~/shared/voting'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing contest ID' })
-  await requireOrgOwnerOrMember(event, id)
+  await requireContestOrganizer(event, id)
 
   const admin = serverSupabaseAdmin()
   const rawBody = await readBody(event)

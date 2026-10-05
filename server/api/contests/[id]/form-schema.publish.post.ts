@@ -2,14 +2,14 @@
 // Publish a form schema (organizers only)
 
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 
 export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
   if (!contestId) throw createError({ statusCode: 400, statusMessage: 'Missing contest ID' })
 
-  // Auth gate — require org owner or contest member
-  await requireOrgOwnerOrMember(event, contestId)
+  // Auth gate — organisers only (not judges or viewers)
+  await requireContestOrganizer(event, contestId)
 
   const client = serverSupabaseAdmin()
 

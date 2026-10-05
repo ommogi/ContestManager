@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestJudgeOrOrganizer, internalError } from '~~/server/utils/supabase'
 
 type RoundAvg = { round_id: string; round_order: number; round_name: string; avg: number | null }
 
@@ -10,7 +10,7 @@ export default defineEventHandler(async (event) => {
 
   const { data: category } = await client.from('categories').select('contest_id').eq('id', categoryId).maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  await requireContestJudgeOrOrganizer(event, category.contest_id)
 
   // Rounds for this category, ordered
   const { data: roundsData, error: roundsError } = await client

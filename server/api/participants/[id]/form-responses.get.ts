@@ -6,7 +6,7 @@
 // endpoint would be a way to read any participant of any contest.
 
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import {
   loadFormResponsesForParticipants,
   toParticipantCoreRow,
@@ -39,7 +39,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'participant_not_found' })
   }
 
-  await requireOrgOwnerOrMember(event, String(participant.contest_id))
+  await requireContestOrganizer(event, String(participant.contest_id))
 
   try {
     const [resolved] = await loadFormResponsesForParticipants(
