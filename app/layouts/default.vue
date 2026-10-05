@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Toaster } from '@/components/ui/sonner'
 import CommandPalette from '@/components/common/CommandPalette.vue'
-import { Search, Sun, Moon } from 'lucide-vue-next'
+import { Search, Sun, Moon, Sparkles } from 'lucide-vue-next'
 import {
   SidebarProvider,
   Sidebar,
@@ -20,6 +20,7 @@ import { LayoutDashboard, Trophy, Settings, Users, Wallet, Ticket, Calendar as C
 import Profile from '@/components/user/profile.vue'
 import NotificationsPopover from '@/components/ui/notifications/NotificationsPopover.vue'
 import EmailComposerDialog from '@/components/contest/EmailComposerDialog.vue'
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import {
   Breadcrumb, BreadcrumbList, BreadcrumbItem,
   BreadcrumbLink, BreadcrumbPage, BreadcrumbSeparator
@@ -32,6 +33,8 @@ const authStore = useAuthStore()
 const { breadcrumbs } = useBreadcrumbs()
 
 const { isOrgOwner, profile } = storeToRefs(authStore)
+
+const assistantOpen = ref(false)
 
 // ── Ticket balance (org owners) ─────────────────────────────────────
 const ticketBalance = ref<number | null>(null)
@@ -223,6 +226,15 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
               <span>{{ ticketBalance }}</span>
               <span class="text-muted-foreground font-normal">tickets</span>
             </NuxtLink>
+            <button
+              v-if="isOrgOwner"
+              class="flex items-center gap-1.5 px-3 h-9 rounded-full border border-border bg-muted/50 hover:bg-muted text-xs font-semibold transition-colors"
+              title="Asistente"
+              @click="assistantOpen = true"
+            >
+              <Sparkles class="w-3.5 h-3.5" />
+              <span class="hidden sm:inline">Asistente</span>
+            </button>
             <NotificationsPopover />
             <button
               @click="toggleColorMode"
@@ -247,6 +259,7 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
     <Toaster position="top-center" theme="system" />
     <ClientOnly>
       <EmailComposerDialog v-if="isOrgOwner" />
+      <AssistantPanel v-if="isOrgOwner" v-model:open="assistantOpen" />
     </ClientOnly>
   </SidebarProvider>
 </template>
