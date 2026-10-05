@@ -3,7 +3,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Users, ListTree, Activity, Calendar, CalendarClock, Settings2, Trophy, Swords, CalendarRange, Zap, Lock, Search, ChevronRight, Grid3x3, List, Link2, Check, Play, Loader2, Trash2, Pencil, Save } from 'lucide-vue-next'
+import { ArrowLeft, Users, ListTree, Activity, Calendar, CalendarClock, Settings2, Trophy, Swords, CalendarRange, Zap, Lock, Search, ChevronRight, Grid3x3, List, Link2, Check, Play, Loader2, Trash2, Pencil, Save, Mail } from 'lucide-vue-next'
+import { useEmailComposer } from '@/composables/useEmailComposer'
 import RichEditor from '@/components/ui/rich-editor/RichEditor.vue'
 import { marked } from 'marked'
 import { toast } from 'vue-sonner'
@@ -27,6 +28,7 @@ import { getStatusClasses, getTypeClasses, getModeClasses, getTierClasses, getSt
 import { DEFAULT_CONTEST_COVER_URL } from '~~/shared/brand-assets'
 
 const route = useRoute()
+const { openComposer } = useEmailComposer()
 const contestStore = useContestStore()
 const { currentContest, categories, participants, rounds } = storeToRefs(contestStore)
 
@@ -279,6 +281,16 @@ async function confirmDeleteCategory() {
             :contest-id="currentContest.id"
             :contest-name="currentContest.name"
           />
+
+          <Button
+            v-if="currentContest?.id"
+            variant="outline"
+            size="sm"
+            class="gap-2 bg-white/90 backdrop-blur-sm text-zinc-900 border-white hover:bg-white dark:bg-white/10 dark:text-zinc-100 dark:border-white/20 dark:hover:bg-white/20 font-bold border-2 rounded-md transition-all uppercase tracking-tighter text-[10px]"
+            @click="openComposer(currentContest.id, { contestName: currentContest.name })"
+          >
+            <Mail class="w-4 h-4" /> Email
+          </Button>
 
           <Button
             v-if="(currentContest as any)?.registration_open"

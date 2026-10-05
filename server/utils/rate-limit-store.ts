@@ -162,6 +162,9 @@ export function usesSharedStore(path: string): boolean {
   }
   // AI proposals cost money per call, so their cap must hold across instances.
   if (path.includes('.ai-draft')) return true
+  if (path.startsWith('/api/assistant/')) return true
+  // Organiser emails reach real inboxes; the cap must not reset per instance.
+  if (/^\/api\/contests\/[^/]+\/emails$/.test(path.split('?')[0]!)) return true
   return path.includes('/refund') || path.includes('/cancel')
 }
 

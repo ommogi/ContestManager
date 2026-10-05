@@ -327,6 +327,8 @@ async function sendWithLog(
     payload: Record<string, any>
     html: string
     dedupeKey?: string | null
+    /** Where replies go. Unset: to the sender, which nobody reads. */
+    replyTo?: string | null
   }
 ): Promise<{ sent: boolean; id: string | null; error?: string; duplicate?: boolean }> {
   const logged = await logEmail({
@@ -361,6 +363,7 @@ async function sendWithLog(
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
+      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
     })
 
     if (error) {
@@ -726,5 +729,74 @@ export async function sendOrgEventEmail(p: OrgEventEmailPayload) {
     payload: p.payload,
     html,
     dedupeKey: p.dedupeKey,
+  })
+}
+
+// ─── Messages written by the organisation (feat/ai) ──────────────────────────
+
+export interface CustomEmailContent {
+  orgName: string
+  contestName: string
+  subject: string
+  /** Plain text. Blank lines split paragraphs; single newlines are kept. */
+  body: string
+}
+
+/**
+ * The organisation's own words, in the product's frame. Everything is escaped:
+ * the body is plain text by design, so nothing an organiser — or a model
+ * drafting for them — writes can turn into markup or a link we did not put
+ * there.
+ */
+export function renderCustomEmailHtml(c: CustomEmailContent): string {
+  const paragraphs = c.body
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map(p => p.trim())
+    .filter(Boolean)
+    .map(p => `<p style="margin:0 0 14px;font-size:15px;line-height:1.55;">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .join('')
+
+  return `
+<!doctype html>
+<html lang="es">
+  <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#18181b;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 12px;">
+      <tr><td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
+          <tr><td style="padding:28px 32px 20px;border-bottom:1px solid #f4f4f5;">
+            <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#71717a;">${escapeHtml(c.orgName)}</p>
+            <h1 style="margin:6px 0 0;font-size:22px;font-weight:800;line-height:1.2;">${escapeHtml(c.subject)}</h1>
+          </td></tr>
+          <tr><td style="padding:24px 32px;">${paragraphs}</td></tr>
+          <tr><td style="padding:18px 32px;background:#fafafa;border-top:1px solid #f4f4f5;">
+            <p style="margin:0;font-size:11px;color:#a1a1aa;line-height:1.5;">
+              Te escribe ${escapeHtml(c.orgName)} sobre ${escapeHtml(c.contestName)}. Si respondes a este correo, la respuesta le llega a la organización.
+            </p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`.trim()
+}
+
+export interface CustomEmailPayload extends CustomEmailContent {
+  to: string
+  replyTo: string | null
+  /** One per campaign and recipient: a retried campaign never sends twice. */
+  dedupeKey: string
+  payload: Record<string, any>
+}
+
+export async function sendCustomEmail(p: CustomEmailPayload) {
+  return sendWithLog({
+    to: p.to,
+    template: 'custom',
+    subject: p.subject,
+    payload: p.payload,
+    html: renderCustomEmailHtml(p),
+    dedupeKey: p.dedupeKey,
+    replyTo: p.replyTo,
   })
 }

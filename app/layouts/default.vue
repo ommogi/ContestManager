@@ -19,6 +19,7 @@ import { useRoute } from 'vue-router'
 import { LayoutDashboard, Trophy, Settings, Users, Wallet, Ticket, Calendar as CalendarIcon, Music2 } from 'lucide-vue-next'
 import Profile from '@/components/user/profile.vue'
 import NotificationsPopover from '@/components/ui/notifications/NotificationsPopover.vue'
+import EmailComposerDialog from '@/components/contest/EmailComposerDialog.vue'
 import {
   Breadcrumb, BreadcrumbList, BreadcrumbItem,
   BreadcrumbLink, BreadcrumbPage, BreadcrumbSeparator
@@ -244,5 +245,8 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
     </SidebarInset>
 
     <Toaster position="top-center" theme="system" />
+    <ClientOnly>
+      <EmailComposerDialog v-if="isOrgOwner" />
+    </ClientOnly>
   </SidebarProvider>
 </template>

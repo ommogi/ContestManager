@@ -19,10 +19,19 @@ const AUTH_MAX = 20      // auth endpoints — raised from 10 to avoid blocking 
 const WEBHOOK_MAX = 60   // stripe webhook
 const FINANCIAL_MAX = 10 // billing and refund endpoints
 const AI_MAX = 5         // AI proposals (KAN-85): every call is paid per token
+const ASSISTANT_MAX = 20 // assistant chat: one call per message, a conversation is several
+const EMAIL_MAX = 10     // organiser emails: dry runs count too, each real send is a campaign
+
+/** Organiser-written emails: POST /api/contests/:id/emails. */
+export function isCustomEmailPath(path: string): boolean {
+  return /^\/api\/contests\/[^/]+\/emails$/.test(path.split('?')[0]!)
+}
 
 export function getLimit(path: string): number {
   if (path.startsWith('/api/stripe/webhook')) return WEBHOOK_MAX
   if (path.includes('.ai-draft')) return AI_MAX
+  if (path.startsWith('/api/assistant/')) return ASSISTANT_MAX
+  if (isCustomEmailPath(path)) return EMAIL_MAX
   if (path.startsWith('/api/auth/')) return AUTH_MAX
   if (path.startsWith('/api/public/')) return PUBLIC_MAX
   // Read-only billing endpoints are polled by the app shell on every page load,
