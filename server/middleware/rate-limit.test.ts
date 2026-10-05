@@ -34,6 +34,17 @@ describe('getLimit', () => {
     expect(getLimit('/api/participants/uuid-123/refund')).toBe(10)
     expect(getLimit('/api/participants/uuid-123/cancel')).toBe(10)
   })
+  it('AI proposal endpoints return 5', () => {
+    expect(getLimit('/api/contests/uuid-123/form-schema.ai-draft')).toBe(5)
+    expect(getLimit('/api/contests/uuid-123/email.ai-draft')).toBe(5)
+  })
+  it('assistant chat returns 20', () => {
+    expect(getLimit('/api/assistant/chat')).toBe(20)
+  })
+  it('organiser emails return 10, without catching unrelated paths', () => {
+    expect(getLimit('/api/contests/uuid-123/emails')).toBe(10)
+    expect(getLimit('/api/contests/uuid-123/emails-preview')).toBe(120)
+  })
   it('general API returns 120', () => {
     expect(getLimit('/api/contests')).toBe(120)
   })
