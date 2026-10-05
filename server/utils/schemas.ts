@@ -5,6 +5,7 @@ import { MAX_WORK_SECONDS } from '../../shared/works-catalog'
 import { VOTING_SYSTEM_IDS } from '../../shared/voting'
 import { MAX_PERFORMANCE_MINUTES } from '../../shared/round-draw'
 import { MAX_CALL_OFFSET_MINUTES, validateSessionWindow } from '../../shared/session-window'
+import { MAX_PLANNED_ROUNDS } from '../../shared/round-plan'
 // Explícito y no por auto-import: vitest no resuelve los auto-imports de Nitro,
 // así que sin esta línea este fichero revienta al cargarse y se lleva por
 // delante los 10 ficheros de test que lo importan, directa o indirectamente.
@@ -361,6 +362,9 @@ export const CategoryCreateSchema = z.object({
   speciality: z.string().max(100).nullable().optional(),
   max_participants: z.number().int().min(1).nullable().optional(),
   entry_fee_cents: z.number().int().min(0).nullable().optional(),
+  // KAN-26: how many rounds the category is created with. Absent means the
+  // organisation does not know yet, and rounds are added one at a time.
+  rounds_count: z.number().int().min(1).max(MAX_PLANNED_ROUNDS).optional(),
 })
 
 // `rehearsal_time` / `performance_time` are TEXT (datetime-local strings), per

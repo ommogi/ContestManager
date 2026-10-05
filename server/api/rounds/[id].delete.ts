@@ -51,9 +51,11 @@ export default defineEventHandler(async (event) => {
   if (dErr) throw internalError(event, dErr, 'rounds.delete')
 
   // Previous round becomes active (clear is_final too — user reopening final round)
-  // Only if the parent contest is still active
+  // Only if the parent contest is still active, and only if that round had
+  // actually been played: deleting a draft (KAN-26) must not start the draft
+  // before it.
   const prev = list.find(r => r.id !== id)
-  if (prev && canReactivate) {
+  if (prev && canReactivate && prev.status === 'closed') {
     const { error: uErr } = await client
       .from('rounds')
       .update({ status: 'active', closed_at: null, is_final: false })
@@ -71,5 +73,6 @@ export default defineEventHandler(async (event) => {
     if (!cErr) categoryReopened = true
   }
 
-  return { deleted: id, reactivated: (prev && canReactivate) ? prev.id : null, categoryReopened }
+  const reactivated = (prev && canReactivate && prev.status === 'closed') ? prev.id : null
+  return { deleted: id, reactivated, categoryReopened }
 })
