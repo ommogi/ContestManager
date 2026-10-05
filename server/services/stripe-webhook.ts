@@ -11,6 +11,9 @@ import {
   persistParticipantFormResponses,
   readPendingFormResponses,
 } from '../utils/inscription-form-responses'
+// Relative import, matching the line above: vitest does not resolve Nitro's
+// `~~/` alias, and this module is exercised by the webhook's own tests.
+import { terminalRejectionIn, describeOrphanedCharge } from '../utils/enrollment-rejection'
 
 export type SupabaseAdmin = ReturnType<typeof createClient>
 
@@ -91,25 +94,37 @@ export async function handleEnrollment(admin: SupabaseAdmin, evt: Stripe.Event, 
     p_amount_cents:    session.amount_total ?? 0,
   })
   if (error) {
-    // `already_enrolled_in_category` means a SECOND session was paid for an
-    // inscription that already exists: the RPC refuses it, backed by
-    // `participants_unique_user_category`. The database is right to refuse, but
-    // Stripe has already captured the money, so the charge is real and the
-    // enrolment is not. Logged loudly with everything needed to find and refund
-    // it by hand — refunding automatically would be moving money on its own.
+    // The RPC raises eight named exceptions, and every one of them means the
+    // same thing: Stripe captured the money and the database refused the
+    // enrolment. None can be fixed by sending the identical event again — the
+    // rule was evaluated against the same row and the same metadata, and will
+    // be evaluated the same way tomorrow.
     //
-    // The retry semantics are unchanged on purpose: this still throws, so
-    // Stripe keeps redelivering and this keeps logging. That is noisy but
-    // visible, and the alternative — swallowing it — would hide a captured
-    // payment. Fixing the redelivery loop is its own issue.
-    if (error.message?.includes('already_enrolled_in_category')) {
-      console.error(
-        '[stripe-webhook] PAID BUT NOT ENROLLED — a second session was paid for an ' +
-        'inscription that already exists. Needs a manual refund. ' +
-        `session=${session.id} payment_intent=${paymentIntent ?? 'none'} ` +
-        `amount_cents=${session.amount_total ?? 0} user=${m.user_id} category=${m.category_id}`,
-      )
+    // So the event is ACKNOWLEDGED rather than retried: returning instead of
+    // throwing leaves the `processed_stripe_events` claim in place, which is
+    // what makes a redelivery a no-op and stops Stripe trying for days.
+    //
+    // Acknowledging is not the same as handling. The charge is real and the
+    // participant is not enrolled, so it is logged with everything needed to
+    // find the payment in Stripe and decide: refund it, or enrol by hand.
+    // Refunding automatically is not done here — that is moving someone's money
+    // without being asked.
+    const rejection = terminalRejectionIn(error.message)
+    if (rejection) {
+      console.error(describeOrphanedCharge({
+        reason: rejection,
+        sessionId: session.id,
+        paymentIntent,
+        amountCents: session.amount_total ?? 0,
+        userId: m.user_id,
+        categoryId: m.category_id,
+        email: m.email,
+      }))
+      return { ignored: `enrollment_rejected:${rejection}` }
     }
+
+    // Anything else — a timeout, a dropped connection, a constraint nobody
+    // planned for — still throws, because a redelivery might genuinely succeed.
     throw new Error(`enroll_participant_paid: ${error.message}`)
   }
 

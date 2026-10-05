@@ -24,6 +24,7 @@ import {
   BreadcrumbLink, BreadcrumbPage, BreadcrumbSeparator
 } from '@/components/ui/breadcrumb'
 import { useBreadcrumbs } from '@/composables/useBreadcrumbs'
+import { BRAND_LOGO_URL } from '~~/shared/brand-assets'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -62,7 +63,7 @@ const isMac = computed(() => typeof navigator !== 'undefined' && /Mac/i.test(nav
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <div class="py-4 flex items-center gap-3">
-          <img class="w-12 h-12 " src="https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png" alt="logo">
+          <img class="w-12 h-12 " :src="BRAND_LOGO_URL" alt="logo">
           <div class="group-data-[collapsible=icon]:hidden min-w-0">
             <h1 class="text-lg font-extrabold tracking-tight leading-tight truncate">
               Contest<span class="text-zinc-500">Manager</span>

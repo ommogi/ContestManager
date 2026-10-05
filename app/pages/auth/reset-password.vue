@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { Mail, ArrowLeft, Loader2 } from 'lucide-vue-next'
+import { BRAND_LOGO_URL } from '~~/shared/brand-assets'
 
 definePageMeta({
   layout: 'auth',
@@ -49,7 +50,7 @@ async function handleReset() {
     <!-- Heading -->
     <div class="flex flex-col items-center gap-3">
       <img
-        src="https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png"
+        :src="BRAND_LOGO_URL"
         alt="Logo"
         class="w-24 h-24 object-contain"
       />

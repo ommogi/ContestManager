@@ -6,6 +6,7 @@ import {
   handleEnrollment,
   processStripeEvent,
 } from './stripe-webhook'
+import { TERMINAL_ENROLLMENT_REJECTIONS } from '../utils/enrollment-rejection'
 import type { SupabaseAdmin } from './stripe-webhook'
 import {
   claimStripeEvent,
@@ -217,6 +218,57 @@ describe('handleEnrollment', () => {
     await expect(
       handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
     ).rejects.toThrow('enroll_participant_paid: dup')
+  })
+
+  // ── A refused enrolment is acknowledged, not retried (KAN-78) ──────────────
+  //
+  // Returning instead of throwing is the whole fix: `processStripeEvent`
+  // releases the idempotency claim only when the handler throws, so throwing
+  // here is what made Stripe redeliver the same doomed event for days.
+
+  it('acknowledges every rejection the RPC can raise instead of retrying it', async () => {
+    for (const reason of TERMINAL_ENROLLMENT_REJECTIONS) {
+      const admin = createMockAdmin({
+        rpc: () => Promise.resolve({ data: null, error: { message: `enroll_participant_paid: ${reason}` } }),
+      })
+      const session = sessionBase('paid', { token: 'tok', user_id: 'u1', category_id: 'c1' })
+
+      const res = await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+
+      expect(res).toEqual({ ignored: `enrollment_rejected:${reason}` })
+    }
+  })
+
+  // Acknowledging must never be silent: the charge is real and nobody is
+  // enrolled, so the only durable trace is this line.
+  it('logs the orphaned charge loudly enough to find the money', async () => {
+    const logged: string[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((m: any) => { logged.push(String(m)) })
+
+    const admin = createMockAdmin({
+      rpc: () => Promise.resolve({ data: null, error: { message: 'enroll_participant_paid: category_full' } }),
+    })
+    const session = sessionBase('paid', { token: 'tok', user_id: 'u1', category_id: 'c1' })
+
+    await handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+    spy.mockRestore()
+
+    expect(logged.join('\n')).toContain('PAID BUT NOT ENROLLED')
+    expect(logged.join('\n')).toContain('category_full')
+    expect(logged.join('\n')).toContain(session.id)
+  })
+
+  // The other half: a failure that a redelivery could actually fix must still
+  // throw, or a database hiccup would silently swallow a real enrolment.
+  it('still throws for a failure a retry could fix', async () => {
+    const admin = createMockAdmin({
+      rpc: () => Promise.resolve({ data: null, error: { message: 'statement timeout' } }),
+    })
+    const session = sessionBase('paid', { token: 'tok', user_id: 'u1', category_id: 'c1' })
+
+    await expect(
+      handleEnrollment(admin, eventBase('checkout.session.completed', session), session)
+    ).rejects.toThrow('statement timeout')
   })
 })
 
@@ -802,5 +854,41 @@ describe('processStripeEvent', () => {
       p_plan: 'starter',
       p_stripe_event_id: 'evt_123',
     }))
+  })
+
+  // ── The fix for KAN-78, proved where it actually matters ──────────────────
+  //
+  // The claim in `processed_stripe_events` is what makes a redelivery a no-op.
+  // Releasing it is what let Stripe retry the same doomed event for days. So
+  // the assertion is about the claim, not about the return value.
+  it('keeps the claim when the enrolment was refused, so Stripe stops retrying', async () => {
+    const { admin } = dispatchAdmin()
+    ;(admin.rpc as any).mockImplementation(() =>
+      Promise.resolve({ data: null, error: { message: 'enroll_participant_paid: category_full' } }),
+    )
+    const session = sessionBase('paid', { type: 'enrollment', token: 'tok', user_id: 'u1', category_id: 'c1' })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await processStripeEvent(admin, eventBase('checkout.session.completed', session))
+    spy.mockRestore()
+
+    expect(res).toMatchObject({ received: true, ignored: 'enrollment_rejected:category_full' })
+    expect(releaseStripeEvent).not.toHaveBeenCalled()
+  })
+
+  // The mirror image: a failure a redelivery could fix must still release the
+  // claim, or the retry would be answered `already_processed` and the paid
+  // enrolment would be lost for good.
+  it('still releases the claim when the failure is worth retrying', async () => {
+    const { admin } = dispatchAdmin()
+    ;(admin.rpc as any).mockImplementation(() =>
+      Promise.resolve({ data: null, error: { message: 'statement timeout' } }),
+    )
+    const session = sessionBase('paid', { type: 'enrollment', token: 'tok', user_id: 'u1', category_id: 'c1' })
+
+    await expect(processStripeEvent(admin, eventBase('checkout.session.completed', session)))
+      .rejects.toMatchObject({ name: 'StripeWebhookError', code: 'handler_failed' })
+
+    expect(releaseStripeEvent).toHaveBeenCalledWith(admin, 'evt_123')
   })
 })

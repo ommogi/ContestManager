@@ -5,6 +5,7 @@ import { Eye, EyeOff, Loader2, Zap } from 'lucide-vue-next'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select'
+import { BRAND_LOGO_URL } from '~~/shared/brand-assets'
 
 const passwordStrength = computed(() => {
   if (!password.value) return { percent: 0, color: '', text: '' }
@@ -171,7 +172,7 @@ async function handleOAuth(provider: 'google' | 'facebook') {
     <!-- Logo + heading -->
     <div class="flex flex-col items-center gap-3">
       <img
-        src="https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png"
+        :src="BRAND_LOGO_URL"
         alt="Logo"
         class="w-24 h-24 object-contain"
       />

@@ -1,6 +1,8 @@
 import { Resend } from 'resend'
 import { serverSupabaseAdmin } from './supabase'
 import { appBaseUrl } from './app-url'
+// Relativo como los de arriba: vitest no resuelve el alias `~~/` de Nitro.
+import { BRAND_LOGO_URL } from '../../shared/brand-assets'
 
 function escapeHtml(str: string | null | undefined): string {
   if (!str) return ''
@@ -238,7 +240,6 @@ export async function sendJudgeInvitationEmail(p: JudgeInvitationEmailPayload) {
   const orgLabel = p.organization_name ? escapeHtml(p.organization_name) : 'una organización'
   const acceptUrl = `${p.invite_url}?action=accept`
   const rejectUrl = `${p.invite_url}?action=reject`
-  const logoUrl = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png'
 
   const html = `
 <!doctype html>
@@ -249,7 +250,7 @@ export async function sendJudgeInvitationEmail(p: JudgeInvitationEmailPayload) {
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
 
           <tr><td style="padding:32px 32px 24px;background:linear-gradient(135deg,#1e1b4b 0%,#312e81 45%,#064e3b 100%);text-align:center;">
-            <img src="${logoUrl}" alt="Contest Manager" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
+            <img src="${BRAND_LOGO_URL}" alt="Contest Manager" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
             <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a5b4fc;">Contest Manager</p>
             <h1 style="margin:0;font-size:22px;font-weight:800;line-height:1.2;color:#ffffff;">Te han invitado como jurado</h1>
           </td></tr>
@@ -546,7 +547,6 @@ export async function sendJudgePoolInvitationEmail(p: JudgePoolInvitationEmailPa
   const orgLabel = p.organization_name ? escapeHtml(p.organization_name) : 'una organización'
   const acceptUrl = `${p.invite_url}?action=accept`
   const rejectUrl = `${p.invite_url}?action=reject`
-  const logoUrl = 'https://thaftosvbwcoudzfwiou.supabase.co/storage/v1/object/public/contest-assets/logo.png'
 
   const html = `
 <!doctype html>
@@ -557,7 +557,7 @@ export async function sendJudgePoolInvitationEmail(p: JudgePoolInvitationEmailPa
         <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e4e4e7;">
 
           <tr><td style="padding:32px 32px 24px;background:linear-gradient(135deg,#1e1b4b 0%,#312e81 45%,#064e3b 100%);text-align:center;">
-            <img src="${logoUrl}" alt="Contest Manager" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
+            <img src="${BRAND_LOGO_URL}" alt="Contest Manager" width="64" height="64" style="display:block;margin:0 auto 14px;border-radius:14px;object-fit:contain;" />
             <p style="margin:0 0 4px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a5b4fc;">Contest Manager</p>
             <h1 style="margin:0;font-size:22px;font-weight:800;line-height:1.2;color:#ffffff;">Te han invitado al pool de jurados</h1>
           </td></tr>

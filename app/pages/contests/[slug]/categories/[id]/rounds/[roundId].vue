@@ -41,6 +41,8 @@ import RoundSessionDialog from '@/components/round/RoundSessionDialog.vue'
 import RoundScheduleDialog from '@/components/round/RoundScheduleDialog.vue'
 import { slotEnd, staleSlots } from '~~/shared/schedule-generator'
 import { toHHMM } from '~~/shared/session-window'
+import BinaryVoteInput from '@/components/round/BinaryVoteInput.vue'
+import { isBinaryScoring } from '~~/shared/voting'
 
 const route = useRoute()
 const router = useRouter()
@@ -69,6 +71,10 @@ useRoundScoresRealtime(roundIdRef, (id) => {
 
 const categoryJudges = computed(() => members.value.filter((m: any) => m.role === 'judge') as any[])
 const currentRound = computed(() => rounds.value.find(r => r.id === roundId))
+
+// A binary round is voted, not marked (KAN-24), so every control an organiser
+// writes a score with offers the two values and nothing in between.
+const isBinaryRound = computed(() => isBinaryScoring((currentRound.value as any)?.scoring_type))
 const currentRoundParticipants = computed(() => roundParticipantsMap.value[roundId] || [])
 const currentRoundSummary = computed(() => roundSummariesMap.value[roundId])
 const isFinalRound = computed(() => (currentRound.value as any)?.is_final === true)
@@ -309,16 +315,22 @@ const adminUserName = computed(() => (profile.value as any)?.full_name ?? user.v
 
 // Admin sets a score on behalf of a judge (from pending list in judge detail modal)
 const isAdminSettingScore = ref(false)
-const adminScoreDraft = ref<{ judgeId: string; participantId: string; value: number; notes: string; promote: boolean } | null>(null)
+const adminScoreDraft = ref<{ judgeId: string; participantId: string; value: number | null; notes: string; promote: boolean } | null>(null)
 
 function openAdminScoreEntry(judgeId: string, participantId: string) {
-  adminScoreDraft.value = { judgeId, participantId, value: 0, notes: '', promote: false }
+  // A vote starts empty: defaulting to 0 would preselect "no pasa" for someone
+  // nobody has judged yet.
+  adminScoreDraft.value = { judgeId, participantId, value: isBinaryRound.value ? null : 0, notes: '', promote: false }
   isAdminSettingScore.value = true
 }
 
 const isSavingAdminScore = ref(false)
 const saveAdminScore = async () => {
   if (!adminScoreDraft.value || !adminUserId.value) return
+  if (adminScoreDraft.value.value === null) {
+    toast.error('Elige si el participante pasa o no pasa')
+    return
+  }
   isSavingAdminScore.value = true
   try {
     const scoreBody = {
@@ -596,7 +608,6 @@ async function handleToggleFinal(val: boolean) {
             name: 'Ranking',
             order: nextOrder,
             status: 'closed',
-            scoring_type: 'numeric',
             is_ranking: true,
             is_published: false,
             closed_at: new Date().toISOString(),
@@ -819,7 +830,6 @@ async function handleFinalizeFinal() {
           name: 'Ranking',
           order: nextOrder,
           status: 'closed',
-          scoring_type: 'numeric',
           is_ranking: true,
           closed_at: new Date().toISOString(),
         },
@@ -1709,7 +1719,14 @@ function statusLabel(status: string) {
                       </div>
                     </TableCell>
                     <TableCell class="text-center py-2">
-                      <NumberField v-model="editDraft.value" :min="0" :max="currentRound?.max_score ?? 10" :step="0.1" class="w-28 mx-auto">
+                      <BinaryVoteInput
+                        v-if="isBinaryRound"
+                        size="sm"
+                        class="w-40 mx-auto"
+                        :model-value="editDraft.value"
+                        @update:model-value="(v: number | null) => editDraft.value = v ?? 0"
+                      />
+                      <NumberField v-else v-model="editDraft.value" :min="0" :max="currentRound?.max_score ?? 10" :step="0.1" class="w-28 mx-auto">
                         <NumberFieldContent class="border-2 border-zinc-300 dark:border-zinc-600 rounded-lg h-8 text-sm font-black">
                           <NumberFieldDecrement class="px-1.5" />
                           <NumberFieldInput class="text-center font-black text-sm h-full" />
@@ -1868,7 +1885,14 @@ function statusLabel(status: string) {
                         </div>
                       </TableCell>
                       <TableCell class="text-center py-2">
-                        <NumberField v-model="judgeEditDraft.value" :min="0" :max="currentRound?.max_score ?? 10" :step="0.1" class="w-28 mx-auto">
+                        <BinaryVoteInput
+                          v-if="isBinaryRound"
+                          size="sm"
+                          class="w-40 mx-auto"
+                          :model-value="judgeEditDraft.value"
+                          @update:model-value="(v: number | null) => judgeEditDraft.value = v ?? 0"
+                        />
+                        <NumberField v-else v-model="judgeEditDraft.value" :min="0" :max="currentRound?.max_score ?? 10" :step="0.1" class="w-28 mx-auto">
                           <NumberFieldContent class="border-2 border-zinc-300 dark:border-zinc-600 rounded-lg h-8 text-sm font-black">
                             <NumberFieldDecrement class="px-1.5" />
                             <NumberFieldInput class="text-center font-black text-sm h-full" />
@@ -2642,12 +2666,29 @@ function statusLabel(status: string) {
       <DialogContent class="max-w-sm rounded-2xl p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
         <div class="p-5 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
           <p class="text-[10px] font-bold uppercase tracking-widest text-purple-500 mb-0.5">Acción de administrador</p>
-          <h2 class="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">Establecer Nota</h2>
+          <h2 class="text-lg font-bold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">
+            {{ isBinaryRound ? 'Establecer Voto' : 'Establecer Nota' }}
+          </h2>
         </div>
         <div class="p-5 space-y-4" v-if="adminScoreDraft">
           <div>
-            <label class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 block mb-1">Nota (0-10)</label>
-            <NumberField v-model="adminScoreDraft.value" :min="0" :max="10" :step="0.1">
+            <label class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 block mb-1">
+              {{ isBinaryRound ? 'Voto' : `Nota (0-${currentRound?.max_score ?? 10})` }}
+            </label>
+            <BinaryVoteInput
+              v-if="isBinaryRound"
+              size="sm"
+              :model-value="adminScoreDraft.value"
+              @update:model-value="(v: number | null) => adminScoreDraft!.value = v ?? 0"
+            />
+            <NumberField
+              v-else
+              :model-value="adminScoreDraft.value ?? 0"
+              :min="0"
+              :max="currentRound?.max_score ?? 10"
+              :step="0.1"
+              @update:model-value="(v: number) => adminScoreDraft!.value = v"
+            >
               <NumberFieldContent>
                 <NumberFieldDecrement />
                 <NumberFieldInput class="h-9 text-sm" />
@@ -2659,7 +2700,7 @@ function statusLabel(status: string) {
             <label class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 block mb-1">Observaciones</label>
             <Input v-model="adminScoreDraft.notes" placeholder="Opcional..." class="h-9 text-sm" />
           </div>
-          <div class="flex items-center gap-2">
+          <div v-if="!isBinaryRound" class="flex items-center gap-2">
             <Checkbox v-model:checked="adminScoreDraft.promote" id="admin-promote" />
             <label for="admin-promote" class="text-sm font-medium cursor-pointer">Promover participante</label>
           </div>
@@ -2668,11 +2709,11 @@ function statusLabel(status: string) {
           <Button variant="ghost" class="h-9 px-4 font-bold uppercase text-[10px] tracking-widest" @click="isAdminSettingScore = false">Cancelar</Button>
           <Button
             class="h-9 px-5 bg-purple-600 hover:bg-purple-700 text-white font-bold uppercase text-[10px] tracking-widest rounded-lg"
-            :disabled="isSavingAdminScore"
+            :disabled="isSavingAdminScore || adminScoreDraft?.value === null"
             @click="saveAdminScore"
           >
             <Activity v-if="isSavingAdminScore" class="w-3.5 h-3.5 mr-1.5 animate-spin" />
-            {{ isSavingAdminScore ? 'Guardando...' : 'Guardar Nota' }}
+            {{ isSavingAdminScore ? 'Guardando...' : (isBinaryRound ? 'Guardar Voto' : 'Guardar Nota') }}
           </Button>
         </DialogFooter>
       </DialogContent>

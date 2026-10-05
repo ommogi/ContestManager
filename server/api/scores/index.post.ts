@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, readBody } from 'h3'
 import { serverSupabaseAdmin, requireAuth, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
 import { ScoreBodySchema } from '~~/server/utils/schemas'
+import { checkScoreSubmission } from '~~/shared/voting'
 
 export default defineEventHandler(async (event) => {
   const user = requireAuth(event)
@@ -12,28 +13,56 @@ export default defineEventHandler(async (event) => {
   }
   const { round_id, participant_id, judge_id, value, notes, promote } = parsed.data
 
-  // Auth gate: if judge_id doesn't match the authenticated user,
-  // require org owner or accepted contest member of the contest (admin override)
-  let isAdminAction = false
-  if (judge_id !== user.id) {
-    const { data: round } = await client
-      .from('rounds')
-      .select('category_id')
-      .eq('id', round_id)
-      .maybeSingle()
-    if (!round) {
-      throw createError({ statusCode: 404, statusMessage: 'round_not_found' })
-    }
+  // The round is read for everyone now, not only for the admin override: its
+  // status and its scoring_type are what decide whether this score is allowed
+  // at all (KAN-24).
+  const { data: round } = await client
+    .from('rounds')
+    .select('category_id, status, scoring_type')
+    .eq('id', round_id)
+    .maybeSingle()
+  if (!round) {
+    throw createError({ statusCode: 404, statusMessage: 'round_not_found' })
+  }
+
+  async function contestId(): Promise<string> {
     const { data: category } = await client
       .from('categories')
       .select('contest_id')
-      .eq('id', round.category_id)
+      .eq('id', round!.category_id)
       .maybeSingle()
     if (!category) {
       throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
     }
-    await requireOrgOwnerOrMember(event, category.contest_id)
+    return category.contest_id as string
+  }
+
+  // Auth gate: if judge_id doesn't match the authenticated user,
+  // require org owner or accepted contest member of the contest (admin override)
+  let isAdminAction = false
+  if (judge_id !== user.id) {
+    await requireOrgOwnerOrMember(event, await contestId())
     isAdminAction = true
+  } else if (round.status !== 'active') {
+    // Writing one's own score outside an open round is a judge's mistake but an
+    // organiser's job — an owner who also sits on the jury corrects their own
+    // row like any other. Only asked here, so the ordinary path stays one query.
+    try {
+      await requireOrgOwnerOrMember(event, await contestId())
+      isAdminAction = true
+    } catch {
+      // Not an organiser: the guard below answers with the round's own reason.
+    }
+  }
+
+  const check = checkScoreSubmission({
+    scoringType: round.scoring_type,
+    roundStatus: round.status,
+    value: Number(value),
+    isAdminAction,
+  })
+  if (!check.ok) {
+    throw createError({ statusCode: check.status, statusMessage: check.code })
   }
 
   // Read existing score for audit
