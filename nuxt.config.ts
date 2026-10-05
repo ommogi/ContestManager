@@ -49,6 +49,10 @@ const sentryOrigin = originOf(process.env.SENTRY_DSN)
  *   * Stripe — **nothing**. There is no Stripe.js in the client (`stripe` is
  *     the server SDK) and checkout is reached with `window.location.href`,
  *     a top-level navigation that CSP does not restrict.
+ *   * Fontshare — the Satoshi typeface, `@import`ed at the top of
+ *     assets/css/tailwind.css: the stylesheet from api.fontshare.com, the font
+ *     files from cdn.fontshare.com. Left out, enforcing would drop the brand
+ *     font on every page.
  *
  * `style-src` has to allow inline: Vue injects component styles at runtime. A
  * permissive style-src is a far smaller exposure than a permissive script-src,
@@ -62,8 +66,8 @@ const cspReportOnly = [
   `frame-src 'none'`,
   `object-src 'none'`,
   `script-src 'self'`,
-  `style-src 'self' 'unsafe-inline'`,
-  `font-src 'self'`,
+  `style-src 'self' 'unsafe-inline' https://api.fontshare.com`,
+  `font-src 'self' https://cdn.fontshare.com`,
   // blob: covers jsPDF's generated documents and canvas-derived images.
   `img-src 'self' data: blob:${supabaseOrigin ? ` ${supabaseOrigin}` : ''}`,
   `connect-src 'self'${supabaseOrigin ? ` ${supabaseOrigin} ${supabaseOrigin.replace(/^https:/, 'wss:')}` : ''}${sentryOrigin ? ` ${sentryOrigin}` : ''}`,
@@ -148,6 +152,7 @@ export default defineNuxtConfig({
         '@tanstack/vue-table',
         'jspdf',
         '@internationalized/date',
+        '@dicebear/core',
       ],
     },
   },
