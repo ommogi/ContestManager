@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import { ScoreOverrideSchema } from '~~/server/utils/schemas'
 
 export default defineEventHandler(async (event) => {
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', round.category_id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  await requireContestOrganizer(event, category.contest_id)
 
   const user = event.context.user as { id: string; email?: string } | undefined
   const parsed = ScoreOverrideSchema.safeParse(await readBody(event))

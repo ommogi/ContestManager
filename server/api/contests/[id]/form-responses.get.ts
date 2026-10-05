@@ -10,7 +10,7 @@
 // rows, and the distinct schemas those rows point at.
 
 import { defineEventHandler, createError, getRouterParam } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer } from '~~/server/utils/supabase'
 import {
   loadContestParticipants,
   loadFormResponsesForParticipants,
@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
 
   // Same gate as the three form-schema.* endpoints. 401 without a session,
   // 403 for an authenticated stranger.
-  await requireOrgOwnerOrMember(event, contestId)
+  await requireContestOrganizer(event, contestId)
 
   const client = serverSupabaseAdmin() as unknown as FormResponsesClient
 

@@ -2,7 +2,7 @@
 // Save/create form schema for a contest (organizers only)
 
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { FormSchemaBodySchema } from '~~/server/utils/schemas'
 import { validateCoreFields, reconcileFormFields } from '~~/shared/inscription-form-core'
 import type { FormField } from '~~/shared/inscription-form'
@@ -16,8 +16,8 @@ export default defineEventHandler(async (event) => {
   const contestId = getRouterParam(event, 'id')
   if (!contestId) throw createError({ statusCode: 400, statusMessage: 'Missing contest ID' })
 
-  // Auth gate — require org owner or contest member
-  await requireOrgOwnerOrMember(event, contestId)
+  // Auth gate — organisers only (not judges or viewers)
+  await requireContestOrganizer(event, contestId)
 
   const rawBody = await readBody(event)
   const parsedBody = FormSchemaBodySchema.safeParse(rawBody)

@@ -1,5 +1,5 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
-import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
+import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { RoundPatchSchema } from '~~/server/utils/schemas'
 import { sendRankingPublishedEmail } from '~~/server/utils/email'
 import { SESSION_WINDOW_MESSAGES, validateSessionWindow } from '~~/shared/session-window'
@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
 
   if (!id) throw createError({ statusCode: 400, statusMessage: 'Missing ID' })
 
-  // Auth gate: must be org owner or contest member
+  // Auth gate— organisers only (not judges or viewers)
   // Resolve contest_id from round → category → contest
   const { data: roundInfo } = await admin
     .from('rounds')
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
     .eq('id', roundInfo.category_id)
     .maybeSingle()
   if (!category) throw createError({ statusCode: 404, statusMessage: 'category_not_found' })
-  await requireOrgOwnerOrMember(event, category.contest_id)
+  await requireContestOrganizer(event, category.contest_id)
 
   // Gate: if activating a round, the parent contest must be active
   if (body?.status === 'active') {
