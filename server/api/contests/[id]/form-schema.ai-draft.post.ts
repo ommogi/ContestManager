@@ -3,11 +3,11 @@
 // (KAN-86). Returns a proposal and saves nothing: the organisation reviews it
 // and keeps it through the normal save endpoint, as an unpublished draft.
 
-import Anthropic from '@anthropic-ai/sdk'
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
+import OpenAI from 'openai'
+import { zodTextFormat } from 'openai/helpers/zod'
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireOrgOwnerOrMember, internalError } from '~~/server/utils/supabase'
-import { getAnthropic, aiModel } from '~~/server/utils/ai'
+import { getOpenAI, aiModel } from '~~/server/utils/ai'
 import { AiFormDraftSchema, draftFormFromRules, MAX_RULES_CHARS, type AiDraftCall } from '~~/server/utils/ai-form-draft'
 import type { FormField } from '~~/shared/inscription-form'
 
@@ -17,8 +17,8 @@ export default defineEventHandler(async (event) => {
 
   await requireOrgOwnerOrMember(event, contestId)
 
-  const anthropic = getAnthropic()
-  if (!anthropic) {
+  const openai = getOpenAI()
+  if (!openai) {
     throw createError({ statusCode: 503, statusMessage: 'ai_not_configured', message: 'El asistente de IA no está configurado.' })
   }
 
@@ -45,29 +45,28 @@ export default defineEventHandler(async (event) => {
   const existingIds = ((latest as { schema_json?: FormField[] | null } | null)?.schema_json ?? []).map(f => f.id)
 
   const call: AiDraftCall = async ({ system, user }) => {
-    const response = await anthropic.beta.messages.parse({
+    // Structured output: the response is constrained to AiFormDraftSchema, and
+    // a refusal or a truncated answer leaves output_parsed null.
+    const response = await openai.responses.parse({
       model: aiModel(),
-      max_tokens: 16000,
-      // A refusal on the primary model is retried server-side on a fallback.
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      output_config: { effort: 'medium', format: zodOutputFormat(AiFormDraftSchema) },
-      system,
-      messages: [{ role: 'user', content: user }],
+      instructions: system,
+      input: user,
+      max_output_tokens: 16000,
+      text: { format: zodTextFormat(AiFormDraftSchema, 'inscription_form_draft') },
     })
-    if (response.stop_reason === 'refusal' || response.stop_reason === 'max_tokens') return null
-    return response.parsed_output ?? null
+    if (response.status === 'incomplete') return null
+    return response.output_parsed ?? null
   }
 
   let result
   try {
     result = await draftFormFromRules(rules, call, existingIds)
   } catch (error) {
-    if (error instanceof Anthropic.RateLimitError) {
+    if (error instanceof OpenAI.RateLimitError) {
       throw createError({ statusCode: 429, statusMessage: 'ai_busy', message: 'El asistente está saturado. Prueba en un minuto.' })
     }
-    if (error instanceof Anthropic.APIError) {
-      console.error('[ai-draft] anthropic error', error.status, error.message)
+    if (error instanceof OpenAI.APIError) {
+      console.error('[ai-draft] openai error', error.status, error.message)
       throw createError({ statusCode: 502, statusMessage: 'ai_unavailable', message: 'El asistente de IA no ha respondido. Prueba de nuevo.' })
     }
     throw error

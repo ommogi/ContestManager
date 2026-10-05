@@ -125,9 +125,9 @@ export default defineNuxtConfig({
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
     platformFeeBps: process.env.PLATFORM_FEE_BPS || '500', // 500 bps = 5%
     appBaseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
-    // AI assistant (KAN-85). Empty key = the AI endpoints answer 503.
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    anthropicModel: process.env.ANTHROPIC_MODEL || '',
+    // AI assistant (KAN-85), OpenAI. Empty key or model = the AI endpoints answer 503.
+    openaiApiKey: process.env.OPENAI_API_KEY || '',
+    openaiModel: process.env.OPENAI_MODEL || '',
     public: {
       supabaseUrl: process.env.SUPABASE_URL || '',
       supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',

@@ -16,7 +16,6 @@
     "docs:preview": "vitepress preview docs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.131.0",
     "@dicebear/core": "^10.7.0",
     "@dicebear/styles": "^10.6.0",
     "@internationalized/date": "^3.12.0",
@@ -44,6 +43,7 @@
     "nuxt": "^4.4.2",
     "nuxt-charts": "^2.1.4",
     "ogl": "^1.0.11",
+    "openai": "^7.28.0",
     "pinia": "^3.0.4",
     "reka-ui": "^2.9.5",
     "resend": "^6.12.2",
