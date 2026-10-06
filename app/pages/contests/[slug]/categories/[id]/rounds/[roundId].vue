@@ -24,6 +24,7 @@ import {
   Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, ListOrdered, CalendarClock, Wand2,
   ChevronDown, MoreHorizontal
 } from 'lucide-vue-next'
+import { START_ROUND_MESSAGE, canStartRound } from '~~/shared/round-plan'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1025,6 +1026,10 @@ const staleSlotIds = computed(() => staleSlots(
 ))
 
 // Header menus: the Horario menu exists while the schedule can still change.
+// Rounds are played in order: only the next one can be started.
+const canStartThisRound = computed(() =>
+  canStartRound(rounds.value.filter((r: any) => r.category_id === categoryId) as any[], roundId).ok,
+)
 const canEditSchedule = computed(() =>
   !!currentRound.value && currentRound.value.status !== 'closed' && !isRankingView.value,
 )
@@ -1246,8 +1251,12 @@ const handleStartRound = async () => {
     toast.error('El concurso debe estar activo para iniciar la ronda')
     return
   }
-  await contestStore.startRound(roundId)
-  toast.success('Ronda iniciada')
+  try {
+    await contestStore.startRound(roundId)
+    toast.success('Ronda iniciada')
+  } catch (e: any) {
+    toast.error(e?.data?.message || 'Error al iniciar la ronda')
+  }
 }
 
 function statusLabel(status: string) {
@@ -1367,8 +1376,8 @@ function statusLabel(status: string) {
         <Button
           v-if="currentRound?.status === 'pending'"
           class="h-9 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold uppercase text-[9px] tracking-widest gap-2 hover:bg-zinc-700 dark:hover:bg-zinc-300"
-          :disabled="currentContest.value?.status !== 'active'"
-          :title="currentContest.value?.status !== 'active' ? 'El concurso debe estar activo' : ''"
+          :disabled="currentContest.value?.status !== 'active' || !canStartThisRound"
+          :title="currentContest.value?.status !== 'active' ? 'El concurso debe estar activo' : !canStartThisRound ? START_ROUND_MESSAGE : ''"
           @click="handleStartRound"
         >
           <Play class="w-3.5 h-3.5 fill-current" /> Iniciar Ronda

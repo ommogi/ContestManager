@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { START_ROUND_MESSAGE, canStartRound } from '~~/shared/round-plan'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -73,6 +74,10 @@ const isCreatingRound = ref(false)
 const newRoundName = ref('')
 
 const categoryRounds = computed(() => rounds.value.filter(r => r.category_id === categoryId).sort((a, b) => a.order - b.order))
+// Rounds are played in order: only the next one can be started.
+const startableRoundIds = computed(() => new Set(
+  categoryRounds.value.filter(r => canStartRound(categoryRounds.value as any[], r.id).ok).map(r => r.id),
+))
 
 // KAN-26: a category can now be born with its rounds already drafted, so
 // "nothing has happened yet" is no longer "there are no rounds" — it is that
@@ -302,8 +307,12 @@ const handleStartRound = async (id: string) => {
     toast.error('El concurso debe estar activo para iniciar la ronda')
     return
   }
-  await contestStore.startRound(id)
-  toast.success('Ronda iniciada')
+  try {
+    await contestStore.startRound(id)
+    toast.success('Ronda iniciada')
+  } catch (e: any) {
+    toast.error(e?.data?.message || 'Error al iniciar la ronda')
+  }
 }
 
 const showDeleteRoundDialog = ref(false)
@@ -854,8 +863,8 @@ function roundStatusClass(status: string) {
                         v-if="round.status === 'pending'"
                         size="sm"
                         class="h-8 px-3 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold uppercase text-[9px] tracking-widest gap-1.5 hover:bg-zinc-700 dark:hover:bg-zinc-300"
-                        :disabled="currentContest?.status !== 'active'"
-                        :title="currentContest?.status !== 'active' ? 'El concurso debe estar activo' : ''"
+                        :disabled="currentContest?.status !== 'active' || !startableRoundIds.has(round.id)"
+                        :title="currentContest?.status !== 'active' ? 'El concurso debe estar activo' : !startableRoundIds.has(round.id) ? START_ROUND_MESSAGE : ''"
                         @click="handleStartRound(round.id)"
                       >
                         <Play class="w-3 h-3 fill-current" /> Iniciar

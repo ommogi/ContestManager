@@ -31,3 +31,35 @@ export function plannedRoundNames(count: unknown): string[] {
   names.push('Final')
   return names
 }
+
+/** What the round needs to know about its siblings to be started. */
+export interface RoundStartEntry {
+  id: string
+  order: number | null
+  status: string | null
+  is_ranking?: boolean | null
+}
+
+export type CanStartRound = { ok: true } | { ok: false, reason: 'not_found' | 'not_pending' | 'previous_open' }
+
+export const START_ROUND_MESSAGE = 'Termina la ronda anterior antes de iniciar esta'
+
+/**
+ * Rounds are played in order: a pending round can be started only once every
+ * earlier round of its category is closed. The ranking pseudo-round is not a
+ * round anyone plays, so it never blocks nor counts.
+ */
+export function canStartRound(rounds: readonly RoundStartEntry[], roundId: string): CanStartRound {
+  const target = rounds.find(r => r.id === roundId)
+  if (!target) return { ok: false, reason: 'not_found' }
+  if (target.status !== 'pending') return { ok: false, reason: 'not_pending' }
+  const order = target.order ?? 0
+  const previousOpen = rounds.some(r =>
+    r.id !== roundId && !r.is_ranking && (r.order ?? 0) < order && r.status !== 'closed',
+  )
+  // Two rounds sharing an order: only one of them may run at a time.
+  const sameOrderActive = rounds.some(r =>
+    r.id !== roundId && !r.is_ranking && (r.order ?? 0) === order && r.status === 'active',
+  )
+  return previousOpen || sameOrderActive ? { ok: false, reason: 'previous_open' } : { ok: true }
+}

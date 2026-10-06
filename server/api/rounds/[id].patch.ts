@@ -3,6 +3,7 @@ import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/
 import { RoundPatchSchema } from '~~/server/utils/schemas'
 import { sendRankingPublishedEmail } from '~~/server/utils/email'
 import { SESSION_WINDOW_MESSAGES, validateSessionWindow } from '~~/shared/session-window'
+import { START_ROUND_MESSAGE, canStartRound, type RoundStartEntry } from '~~/shared/round-plan'
 
 export default defineEventHandler(async (event) => {
   const admin = serverSupabaseAdmin()
@@ -69,6 +70,20 @@ export default defineEventHandler(async (event) => {
         statusCode: 409,
         statusMessage: 'La ronda está cerrada y no se puede modificar.',
       })
+    }
+  }
+
+  // Rounds are played in order: a pending round starts only once every earlier
+  // round of its category is closed.
+  if (body.status === 'active' && (prev as any)?.status === 'pending') {
+    const { data: siblings, error: sibErr } = await admin
+      .from('rounds')
+      .select('id, order, status, is_ranking')
+      .eq('category_id', (prev as any).category_id)
+    if (sibErr) throw internalError(event, sibErr, 'rounds.select')
+    const check = canStartRound((siblings ?? []) as RoundStartEntry[], id)
+    if (!check.ok && check.reason === 'previous_open') {
+      throw createError({ statusCode: 409, statusMessage: 'previous_round_open', message: START_ROUND_MESSAGE })
     }
   }
 
