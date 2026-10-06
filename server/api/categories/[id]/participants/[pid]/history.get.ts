@@ -44,13 +44,18 @@ export default defineEventHandler(async (event) => {
   if (rpErr) throw internalError(event, rpErr, 'round_participants.select')
 
   const judgeIds = Array.from(new Set((scores || []).map(s => s.judge_id).filter(Boolean)))
-  let judgeMap: Record<string, string> = {}
+  // Judge name: the profile's full name, else the email the judge was invited
+  // with, else a generic label — never the raw id.
+  const judgeMap: Record<string, string> = {}
   if (judgeIds.length) {
-    const { data: profs } = await client
-      .from('profiles')
-      .select('id, full_name, email')
-      .in('id', judgeIds as string[])
-    for (const p of profs || []) judgeMap[p.id] = p.full_name || p.email || p.id
+    const [{ data: profs, error: profErr }, { data: members, error: memErr }] = await Promise.all([
+      client.from('profiles').select('id, full_name').in('id', judgeIds as string[]),
+      client.from('contest_members').select('user_id, email').eq('contest_id', (category as any).contest_id).in('user_id', judgeIds as string[]),
+    ])
+    if (profErr) throw internalError(event, profErr, 'profiles.select')
+    if (memErr) throw internalError(event, memErr, 'contest_members.select')
+    for (const m of (members || []) as { user_id: string | null; email: string | null }[]) if (m.user_id && m.email) judgeMap[m.user_id] = m.email
+    for (const p of (profs || []) as { id: string; full_name: string | null }[]) if (p.full_name) judgeMap[p.id] = p.full_name
   }
 
   const result = rows.map(r => {
@@ -65,7 +70,7 @@ export default defineEventHandler(async (event) => {
       is_qualified: rp?.is_qualified ?? null,
       override: rp?.final_score_override ?? null,
       avg,
-      scores: sList.map(s => ({ judge_id: s.judge_id, judge_name: s.judge_id ? (judgeMap[s.judge_id] || s.judge_id) : '—', value: Number(s.value), created_at: s.created_at })),
+      scores: sList.map(s => ({ judge_id: s.judge_id, judge_name: s.judge_id ? (judgeMap[s.judge_id] || 'Jurado') : '—', value: Number(s.value), created_at: s.created_at })),
     }
   })
 
