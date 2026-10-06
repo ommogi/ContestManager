@@ -26,7 +26,7 @@ import {
   NumberFieldInput
 } from '@/components/ui/number-field'
 import {
-  ArrowLeft, Users, UserPlus, Search,
+  Users, UserPlus, Search,
   Trash2, Trophy, Settings, Settings2, Layers, Plus, Play, Eye, UserCheck, Activity, Swords, CalendarRange, Medal, Sparkles, Link, ClipboardCheck,
   ChevronLeft, ChevronRight, Check, Pencil, Save, X,
   CheckCircle2, XCircle, AlertCircle
@@ -457,9 +457,6 @@ function roundStatusClass(status: string) {
       <div class="flex gap-4">
         <div>
           <div class="flex flex-wrap items-center gap-3">
-            <NuxtLink :to="`/contests/${route.params.slug}`" class="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors shrink-0">
-              <ArrowLeft class="w-4 h-4" />
-            </NuxtLink>
             <h1 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 uppercase">{{ category?.name || 'Cargando...' }}</h1>
             <div v-if="category" class="flex flex-wrap gap-2">
               <Badge
@@ -759,9 +756,9 @@ function roundStatusClass(status: string) {
     <!-- PHASE 2: EXECUTION -->
     <div v-else class="space-y-10 animate-in fade-in slide-in-from-right-10 duration-700">
       <!-- Rounds List -->
-      <div class="py-12 space-y-12">
+      <div class="space-y-8">
         <div class="space-y-4">
-          <h2 class="text-xl font-bold tracking-tight flex items-center gap-2 mb-6">
+          <h2 class="text-xl font-bold tracking-tight flex items-center gap-2">
             <Layers class="w-5 h-5 text-zinc-500" />
             Rondas de Evaluación
           </h2>

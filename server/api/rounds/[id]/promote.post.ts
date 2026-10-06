@@ -100,7 +100,10 @@ export default defineEventHandler(async (event) => {
     .select('*')
     .eq('category_id', currentRound.category_id)
     .eq('order', currentRound.order + 1)
-    .single()
+    .neq('is_ranking', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
 
   if (!nextRound) {
     const { data: created, error: createErrorMsg } = await admin

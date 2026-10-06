@@ -599,31 +599,13 @@ async function handleToggleFinal(val: boolean) {
   isFinalDraft.value = val
   try {
     if (val) {
-      // Mark round as final + auto-create ranking pseudo-round (unpublished)
+      // Only mark the round as final. The ranking pseudo-round is created
+      // when the final is finished (handleFinalizeFinal), not before.
       await apiClient(`/api/rounds/${roundId}`, {
         method: 'PATCH',
         body: { is_final: true }
       })
-      const currentRnd = rounds.value.find(r => r.id === roundId)
-      const nextOrder = (currentRnd?.order || 0) + 1
-      const existingRanking = rounds.value.find(
-        (r: any) => r.category_id === categoryId && r.is_ranking === true
-      )
-      if (!existingRanking) {
-        await apiClient(`/api/categories/${categoryId}/rounds`, {
-          method: 'POST',
-          body: {
-            category_id: categoryId,
-            name: 'Ranking',
-            order: nextOrder,
-            status: 'closed',
-            is_ranking: true,
-            is_published: false,
-            closed_at: new Date().toISOString(),
-          },
-        })
-      }
-      toast.success('Marcada como ronda final · Ranking creado')
+      toast.success('Marcada como ronda final')
     } else {
       // Un-final: delete ranking pseudo-round + clear is_final + reopen category
       const ranking = rounds.value.find(
@@ -647,7 +629,7 @@ async function handleToggleFinal(val: boolean) {
     }
   } catch (e: any) {
     isFinalDraft.value = prev
-    toast.error(e?.statusMessage || e?.data?.statusMessage || 'Error al cambiar ronda final')
+    toast.error(e?.data?.message || 'Error al cambiar ronda final')
   } finally {
     isTogglingFinal.value = false
   }
@@ -1282,12 +1264,6 @@ function statusLabel(status: string) {
     <!-- Header -->
     <div class="flex items-center justify-between border-b-2 border-zinc-100 dark:border-zinc-800 pb-6">
       <div class="flex items-center gap-3">
-        <button
-          class="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-          @click="router.push(`/contests/${route.params.slug}/categories/${categoryId}`)"
-        >
-          <ArrowLeft class="w-4 h-4" />
-        </button>
         <div>
           <div class="flex items-center gap-2">
             <h2 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 leading-none uppercase">{{ currentRound?.name }}</h2>
@@ -1766,7 +1742,7 @@ function statusLabel(status: string) {
                     <TableCell class="py-2">
                       <Input v-model="editDraft.notes" placeholder="Observaciones…" class="h-8 text-sm border-2 border-zinc-300 dark:border-zinc-600 rounded-lg" />
                     </TableCell>
-                    <TableCell class="py-2 pr-3">
+                    <TableCell class="py-2 pr-3 w-20 whitespace-nowrap">
                       <div class="flex items-center gap-1 justify-end">
                         <Button size="icon" variant="ghost" class="h-7 w-7 text-zinc-400 hover:text-zinc-700" @click="cancelEditing">
                           <X class="w-3.5 h-3.5" />
@@ -1793,7 +1769,7 @@ function statusLabel(status: string) {
 
     <!-- ── Judge detail dialog ──────────────────────────────────────────────── -->
     <Dialog v-model:open="isJudgeDetailOpen" @update:open="(v) => { if (!v) { cancelEditingParticipant(); judgeDetailFilter = '' } }">
-      <DialogContent class="max-w-3xl rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
+      <DialogContent class="max-w-5xl rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
         <div class="p-6 pr-16 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center gap-4">
           <AvatarBubble
             :name="(currentJudgeDetails?.judge as any)?.profile?.full_name || (currentJudgeDetails?.judge as any)?.full_name || (currentJudgeDetails?.judge as any)?.email || 'J'"
@@ -1932,7 +1908,7 @@ function statusLabel(status: string) {
                       <TableCell class="py-2">
                         <Input v-model="judgeEditDraft.notes" placeholder="Observaciones…" class="h-8 text-sm border-2 border-zinc-300 dark:border-zinc-600 rounded-lg" />
                       </TableCell>
-                      <TableCell class="py-2 pr-3">
+                      <TableCell class="py-2 pr-3 w-20 whitespace-nowrap">
                         <div class="flex items-center gap-1 justify-end">
                           <Button size="icon" variant="ghost" class="h-7 w-7 text-zinc-400 hover:text-zinc-700" @click="cancelEditingParticipant">
                             <X class="w-3.5 h-3.5" />
@@ -2129,9 +2105,9 @@ function statusLabel(status: string) {
 
     <!-- ── Promotion modal ──────────────────────────────────────────────────── -->
     <Dialog v-model:open="isPromotionModalOpen" @update:open="(v) => { if (!v) { promotionSearchQuery = ''; promotionPage = 1 } }">
-      <DialogContent class="max-w-2xl rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
+      <DialogContent class="max-w-2xl max-h-[90dvh] flex flex-col gap-0 rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
         <!-- Header -->
-        <div class="p-6 pr-16 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center gap-4">
+        <div class="shrink-0 p-6 pr-16 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center gap-4">
           <div class="w-11 h-11 rounded-xl bg-zinc-900 dark:bg-zinc-100 flex items-center justify-center shadow-sm shrink-0">
             <Trophy class="w-5 h-5 text-white dark:text-zinc-900" />
           </div>
@@ -2141,8 +2117,10 @@ function statusLabel(status: string) {
           </div>
         </div>
 
+        <!-- Scrollable body: the header and the footer stay in view -->
+        <div class="flex-1 min-h-0 overflow-y-auto">
         <!-- Config row -->
-        <div class="px-6 pt-5 grid grid-cols-2 gap-4">
+        <div class="px-6 pt-5">
           <div class="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-900 rounded-xl border-2 border-zinc-100 dark:border-zinc-800">
             <div class="flex flex-col">
               <span class="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Ayuda: marcar los mejores</span>
@@ -2244,8 +2222,10 @@ function statusLabel(status: string) {
           </div>
         </div>
 
+        </div>
+
         <!-- Footer -->
-        <div class="p-5 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 flex items-center justify-between gap-4">
+        <div class="shrink-0 p-5 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 flex items-center justify-between gap-4">
           <span class="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
             {{ selectedPromotionCount }} de {{ allPromotionParticipants.length }} seleccionado{{ selectedPromotionCount !== 1 ? 's' : '' }} · sin cupo
           </span>

@@ -328,12 +328,6 @@ const activeTab = ref<'participantes' | 'formulario'>('participantes')
   <div class="space-y-6 max-w-[1400px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500">
     <!-- Header -->
     <div class="flex items-start gap-3">
-      <NuxtLink
-        :to="`/contests/${route.params.slug}`"
-        class="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors shrink-0 mt-1"
-      >
-        <ArrowLeft class="w-4 h-4" />
-      </NuxtLink>
       <div class="flex-1 min-w-0">
         <p class="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
           {{ currentContest?.name || '…' }}
