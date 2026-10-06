@@ -3,6 +3,7 @@ import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/
 import { sendPromotionEmail } from '~~/server/utils/email'
 import { PromoteBodySchema } from '~~/server/utils/schemas'
 import { buildPromotionAuditRows } from '~~/server/utils/promotion-audit'
+import { carryDrawNumbers } from '~~/shared/round-draw'
 
 export default defineEventHandler(async (event) => {
   const admin = serverSupabaseAdmin()
@@ -56,6 +57,47 @@ export default defineEventHandler(async (event) => {
   const allPartIds = (allRoundParts ?? []).map((rp: any) => rp.participant_id)
   const notPromotedIds = allPartIds.filter((pid: string) => !body.participantIds.includes(pid))
 
+  // Everything that can fail without writing happens first: reading the next
+  // round and working out who enters it with which draw number. A failure here
+  // must not leave the current round closed and the next one empty.
+  const { data: existingRound } = await admin
+    .from('rounds')
+    .select('*')
+    .eq('category_id', currentRound.category_id)
+    .eq('order', currentRound.order + 1)
+    .neq('is_ranking', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  // The next round may already have people in it — a second batch promoted
+  // into the same round — so those are skipped (the unique (round_id,
+  // participant_id) would refuse them anyway) and the new numbers continue
+  // after the highest one already there.
+  const { data: existingNext } = existingRound
+    ? await admin
+        .from('round_participants')
+        .select('participant_id, draw_number')
+        .eq('round_id', existingRound.id)
+    : { data: [] as any[] }
+
+  const alreadyThere = new Set((existingNext ?? []).map((rp: any) => rp.participant_id))
+  const highestThere = (existingNext ?? [])
+    .reduce((max: number, rp: any) => Math.max(max, rp.draw_number ?? 0), 0)
+
+  const drawByParticipant = new Map(
+    (allRoundParts ?? []).map((rp: any) => [rp.participant_id, rp.draw_number ?? null]),
+  )
+  const toInsert = body.participantIds.filter((pid: string) => !alreadyThere.has(pid))
+
+  // KAN-27: carry the draw numbers over, compacted. Ordered by the number they
+  // had, so the insertion order matches the running order of the new round.
+  const carried = carryDrawNumbers(
+    toInsert.map((pid: string) => ({ participant_id: pid, draw_number: drawByParticipant.get(pid) ?? null })),
+    { startAt: highestThere + 1 },
+  )
+  const ordered = [...carried.keys()]
+
   // Close current round
   await admin.from('rounds').update({ status: 'closed' }).eq('id', roundId)
 
@@ -94,17 +136,8 @@ export default defineEventHandler(async (event) => {
     console.error('[promote] audit log failed:', e?.message)
   }
 
-  // 3. Find/Create next round
-  let { data: nextRound } = await admin
-    .from('rounds')
-    .select('*')
-    .eq('category_id', currentRound.category_id)
-    .eq('order', currentRound.order + 1)
-    .neq('is_ranking', true)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle()
-
+  // Create the next round if there is none yet
+  let nextRound = existingRound
   if (!nextRound) {
     const { data: created, error: createErrorMsg } = await admin
       .from('rounds')
@@ -123,34 +156,7 @@ export default defineEventHandler(async (event) => {
     nextRound = created
   }
 
-  // 4. Add participants to next round
-  //
-  // The next round may already have people in it — a second batch promoted
-  // into the same round — so those are skipped (the unique (round_id,
-  // participant_id) would refuse them anyway) and the new numbers continue
-  // after the highest one already there.
-  const { data: existingNext } = await admin
-    .from('round_participants')
-    .select('participant_id, draw_number')
-    .eq('round_id', nextRound!.id)
-
-  const alreadyThere = new Set((existingNext ?? []).map((rp: any) => rp.participant_id))
-  const highestThere = (existingNext ?? [])
-    .reduce((max: number, rp: any) => Math.max(max, rp.draw_number ?? 0), 0)
-
-  const drawByParticipant = new Map(
-    (allRoundParts ?? []).map((rp: any) => [rp.participant_id, rp.draw_number ?? null]),
-  )
-  const toInsert = body.participantIds.filter((pid: string) => !alreadyThere.has(pid))
-
-  // KAN-27: carry the draw numbers over, compacted. Ordered by the number they
-  // had, so the insertion order matches the running order of the new round.
-  const carried = carryDrawNumbers(
-    toInsert.map((pid: string) => ({ participant_id: pid, draw_number: drawByParticipant.get(pid) ?? null })),
-    { startAt: highestThere + 1 },
-  )
-  const ordered = [...carried.keys()]
-
+  // Add participants to next round.
   // `is_qualified` stays NULL: entering a round is not a verdict. It is only set
   // (true/false) when THIS round is resolved above. Inserting `false` made every
   // participant of a fresh round read as "Eliminado" before anyone was scored.
