@@ -1,6 +1,7 @@
 import { defineEventHandler, createError, getRouterParam, readBody } from 'h3'
 import { serverSupabaseAdmin, requireContestOrganizer, internalError } from '~~/server/utils/supabase'
 import { RoundCreateSchema } from '~~/server/utils/schemas'
+import { buildRoundInsert } from '~~/server/utils/round-create'
 import { scoringTypeFor } from '~~/shared/voting'
 
 export default defineEventHandler(async (event) => {
@@ -22,11 +23,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Invalid request', data: parsed.error.issues })
   }
   const body = parsed.data as Record<string, any>
-  const allowed = ['name', 'order', 'scoring_type', 'is_final']
-  const roundData: Record<string, any> = { category_id: categoryId }
-  for (const key of allowed) {
-    if (key in body) roundData[key] = body[key]
-  }
+  const roundData = buildRoundInsert(categoryId, body)
   // KAN-23: unless the caller says otherwise, the round scores the way the
   // contest does — the jury should not meet a different interface per round.
   if (!roundData.scoring_type) {

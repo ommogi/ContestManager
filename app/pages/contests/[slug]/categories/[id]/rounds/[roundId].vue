@@ -21,8 +21,17 @@ import {
 } from '@/components/ui/number-field'
 import {
   ArrowLeft, Users, Search, Trophy, Layers, Play, Activity, Swords, Sparkles, ClipboardCheck,
-  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, ListOrdered, CalendarClock, Wand2
+  Pencil, Save, X, AlertCircle, Music, Clock, FileText, ArrowUpDown, Star, History, ListOrdered, CalendarClock, Wand2,
+  ChevronDown, MoreHorizontal
 } from 'lucide-vue-next'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
 import { useContestStore } from '@/stores/contest'
@@ -590,31 +599,13 @@ async function handleToggleFinal(val: boolean) {
   isFinalDraft.value = val
   try {
     if (val) {
-      // Mark round as final + auto-create ranking pseudo-round (unpublished)
+      // Only mark the round as final. The ranking pseudo-round is created
+      // when the final is finished (handleFinalizeFinal), not before.
       await apiClient(`/api/rounds/${roundId}`, {
         method: 'PATCH',
         body: { is_final: true }
       })
-      const currentRnd = rounds.value.find(r => r.id === roundId)
-      const nextOrder = (currentRnd?.order || 0) + 1
-      const existingRanking = rounds.value.find(
-        (r: any) => r.category_id === categoryId && r.is_ranking === true
-      )
-      if (!existingRanking) {
-        await apiClient(`/api/categories/${categoryId}/rounds`, {
-          method: 'POST',
-          body: {
-            category_id: categoryId,
-            name: 'Ranking',
-            order: nextOrder,
-            status: 'closed',
-            is_ranking: true,
-            is_published: false,
-            closed_at: new Date().toISOString(),
-          },
-        })
-      }
-      toast.success('Marcada como ronda final · Ranking creado')
+      toast.success('Marcada como ronda final')
     } else {
       // Un-final: delete ranking pseudo-round + clear is_final + reopen category
       const ranking = rounds.value.find(
@@ -638,7 +629,7 @@ async function handleToggleFinal(val: boolean) {
     }
   } catch (e: any) {
     isFinalDraft.value = prev
-    toast.error(e?.statusMessage || e?.data?.statusMessage || 'Error al cambiar ronda final')
+    toast.error(e?.data?.message || 'Error al cambiar ronda final')
   } finally {
     isTogglingFinal.value = false
   }
@@ -1033,6 +1024,24 @@ const staleSlotIds = computed(() => staleSlots(
   (currentContest.value as any)?.performance_default_minutes ?? null,
 ))
 
+// Header menus: the Horario menu exists while the schedule can still change.
+const canEditSchedule = computed(() =>
+  !!currentRound.value && currentRound.value.status !== 'closed' && !isRankingView.value,
+)
+// Same warnings the header used to show as loose text, now inside the menu
+// and summarised as a dot on its button.
+const drawWarning = computed(() => {
+  if (!canEditSchedule.value || drawRows.value.length === 0 || roundDrawReadiness.value.ready) return null
+  return roundDrawReadiness.value.missing.length
+    ? `${roundDrawReadiness.value.missing.length} sin sorteo`
+    : 'Sorteo con repetidos'
+})
+const staleSlotsWarning = computed(() => {
+  const n = staleSlotIds.value.length
+  if (!canEditSchedule.value || n === 0) return null
+  return `${n} turno${n === 1 ? '' : 's'} desactualizado${n === 1 ? '' : 's'}`
+})
+
 // The generator's preview points at whichever setting is missing.
 const openDrawFromSchedule = () => { isScheduleOpen.value = false; isDrawOpen.value = true }
 const openSessionFromSchedule = () => { isScheduleOpen.value = false; isSessionOpen.value = true }
@@ -1255,12 +1264,6 @@ function statusLabel(status: string) {
     <!-- Header -->
     <div class="flex items-center justify-between border-b-2 border-zinc-100 dark:border-zinc-800 pb-6">
       <div class="flex items-center gap-3">
-        <button
-          class="p-1 rounded-md hover:bg-muted/60 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-          @click="router.push(`/contests/${route.params.slug}/categories/${categoryId}`)"
-        >
-          <ArrowLeft class="w-4 h-4" />
-        </button>
         <div>
           <div class="flex items-center gap-2">
             <h2 class="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 leading-none uppercase">{{ currentRound?.name }}</h2>
@@ -1282,77 +1285,83 @@ function statusLabel(status: string) {
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">
-        <!-- Draw can be set before the round starts, never once it is closed -->
-        <Button
-          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
-          variant="outline"
-          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-          @click="isDrawOpen = true"
-        >
-          <ListOrdered class="w-3.5 h-3.5" /> Sorteo
-        </Button>
-        <span
-          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView && drawRows.length > 0 && !roundDrawReadiness.ready"
-          class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber-700 dark:text-amber-400"
-          role="status"
-        >
-          <AlertCircle class="w-3.5 h-3.5" />
-          {{ roundDrawReadiness.missing.length ? `${roundDrawReadiness.missing.length} sin sorteo` : 'Sorteo con repetidos' }}
-        </span>
+        <!-- Horario: draw, session window and slots. Set before the round
+             starts, never once it is closed. -->
+        <DropdownMenu v-if="canEditSchedule">
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="outline"
+              class="relative rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800 hover:bg-sky-50 dark:hover:bg-sky-950/30"
+            >
+              <CalendarClock class="w-3.5 h-3.5" /> Horario
+              <ChevronDown class="w-3.5 h-3.5 opacity-60" />
+              <!-- The warnings live inside the menu; the dot keeps them in sight when it is closed. -->
+              <span
+                v-if="drawWarning || staleSlotsWarning"
+                class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-background"
+                :title="[drawWarning, staleSlotsWarning].filter(Boolean).join(' · ')"
+              />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-64">
+            <DropdownMenuLabel class="text-[10px] uppercase tracking-widest text-muted-foreground">Preparación</DropdownMenuLabel>
+            <DropdownMenuItem class="gap-2 text-amber-700 dark:text-amber-400" @select="isDrawOpen = true">
+              <ListOrdered class="w-4 h-4" /> Sorteo
+              <span v-if="drawWarning" class="ml-auto inline-flex items-center gap-1 text-[10px] font-bold uppercase" role="status">
+                <AlertCircle class="w-3 h-3" /> {{ drawWarning }}
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem class="gap-2 text-sky-700 dark:text-sky-400" @select="isSessionOpen = true">
+              <CalendarClock class="w-4 h-4" /> Jornada
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              class="gap-2 text-violet-700 dark:text-violet-400"
+              :title="staleSlotsWarning ? 'La duración de estos turnos cambió después de generar el horario. Regenera para que cuadren.' : undefined"
+              @select="isScheduleOpen = true"
+            >
+              <Wand2 class="w-4 h-4" /> Generar turnos
+              <span v-if="staleSlotsWarning" class="ml-auto inline-flex items-center gap-1 text-[10px] font-bold uppercase text-orange-700 dark:text-orange-400" role="status">
+                <AlertCircle class="w-3 h-3" /> {{ staleSlotsWarning }}
+              </span>
+            </DropdownMenuItem>
+            <template v-if="currentRound?.status === 'active'">
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel class="text-[10px] uppercase tracking-widest text-muted-foreground">Día del concurso</DropdownMenuLabel>
+              <DropdownMenuItem class="gap-2 text-blue-700 dark:text-blue-400" @select="openEnsayos">
+                <Music class="w-4 h-4" /> Ensayos
+              </DropdownMenuItem>
+              <DropdownMenuItem class="gap-2 text-emerald-700 dark:text-emerald-400" @select="openActuaciones">
+                <Clock class="w-4 h-4" /> Actuaciones
+              </DropdownMenuItem>
+            </template>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-        <!-- Session window can be set before the round starts, never once it is closed -->
-        <Button
-          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
-          variant="outline"
-          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800 hover:bg-sky-50 dark:hover:bg-sky-950/30"
-          @click="isSessionOpen = true"
-        >
-          <CalendarClock class="w-3.5 h-3.5" /> Jornada
-        </Button>
-        <Button
-          v-if="currentRound && currentRound.status !== 'closed' && !isRankingView"
-          variant="outline"
-          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800 hover:bg-violet-50 dark:hover:bg-violet-950/30"
-          @click="isScheduleOpen = true"
-        >
-          <Wand2 class="w-3.5 h-3.5" /> Generar turnos
-        </Button>
-        <span
-          v-if="currentRound && currentRound.status !== 'closed' && staleSlotIds.length"
-          class="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-orange-700 dark:text-orange-400"
-          role="status"
-          title="La duración de estos turnos cambió después de generar el horario. Regenera para que cuadren."
-        >
-          <AlertCircle class="w-3.5 h-3.5" />
-          {{ staleSlotIds.length }} turno{{ staleSlotIds.length === 1 ? '' : 's' }} desactualizado{{ staleSlotIds.length === 1 ? '' : 's' }}
-        </span>
-
-        <!-- Schedule buttons (only in active round) -->
-        <template v-if="currentRound?.status === 'active'">
-          <Button
-            variant="outline"
-            class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-            @click="openEnsayos"
-          >
-            <Music class="w-3.5 h-3.5" /> Ensayos
-          </Button>
-          <Button
-            variant="outline"
-            class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-            @click="openActuaciones"
-          >
-            <Clock class="w-3.5 h-3.5" /> Actuaciones
-          </Button>
-          <Button
-            variant="outline"
-            class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900"
-            @click="isPdfOpen = true"
-          >
-            <FileText class="w-3.5 h-3.5" /> PDF
-          </Button>
-
-          <div class="w-px h-6 bg-zinc-200 dark:bg-zinc-700 mx-1" />
-        </template>
+        <!-- Más: documents and control -->
+        <DropdownMenu v-if="!isRankingView || currentRound?.status === 'active'">
+          <DropdownMenuTrigger as-child>
+            <Button
+              variant="outline"
+              class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+            >
+              <MoreHorizontal class="w-4 h-4" /> Más
+              <ChevronDown class="w-3.5 h-3.5 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" class="w-52">
+            <DropdownMenuItem v-if="currentRound?.status === 'active'" class="gap-2" @select="isPdfOpen = true">
+              <FileText class="w-4 h-4" /> PDF
+            </DropdownMenuItem>
+            <template v-if="!isRankingView">
+              <DropdownMenuItem class="gap-2" @select="isJudgeMatrixOpen = true">
+                <Swords class="w-4 h-4" /> Matriz
+              </DropdownMenuItem>
+              <DropdownMenuItem class="gap-2 text-purple-700 dark:text-purple-400" @select="openAuditLog">
+                <ClipboardCheck class="w-4 h-4" /> Registro
+              </DropdownMenuItem>
+            </template>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <!-- Iniciar button (only if pending) -->
         <Button
@@ -1363,23 +1372,6 @@ function statusLabel(status: string) {
           @click="handleStartRound"
         >
           <Play class="w-3.5 h-3.5 fill-current" /> Iniciar Ronda
-        </Button>
-
-        <Button
-          v-if="!isRankingView"
-          variant="outline"
-          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 dark:border-zinc-800 dark:hover:bg-zinc-900"
-          @click="isJudgeMatrixOpen = true"
-        >
-          <Swords class="w-4 h-4" /> Matriz
-        </Button>
-        <Button
-          v-if="!isRankingView"
-          variant="outline"
-          class="rounded-md gap-2 font-bold text-[10px] uppercase tracking-widest h-9 px-4 border-2 border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-950/30"
-          @click="openAuditLog"
-        >
-          <ClipboardCheck class="w-4 h-4" /> Registro
         </Button>
       </div>
     </div>
@@ -1750,7 +1742,7 @@ function statusLabel(status: string) {
                     <TableCell class="py-2">
                       <Input v-model="editDraft.notes" placeholder="Observaciones…" class="h-8 text-sm border-2 border-zinc-300 dark:border-zinc-600 rounded-lg" />
                     </TableCell>
-                    <TableCell class="py-2 pr-3">
+                    <TableCell class="py-2 pr-3 w-20 whitespace-nowrap">
                       <div class="flex items-center gap-1 justify-end">
                         <Button size="icon" variant="ghost" class="h-7 w-7 text-zinc-400 hover:text-zinc-700" @click="cancelEditing">
                           <X class="w-3.5 h-3.5" />
@@ -1777,7 +1769,7 @@ function statusLabel(status: string) {
 
     <!-- ── Judge detail dialog ──────────────────────────────────────────────── -->
     <Dialog v-model:open="isJudgeDetailOpen" @update:open="(v) => { if (!v) { cancelEditingParticipant(); judgeDetailFilter = '' } }">
-      <DialogContent class="max-w-3xl rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
+      <DialogContent class="max-w-5xl rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
         <div class="p-6 pr-16 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center gap-4">
           <AvatarBubble
             :name="(currentJudgeDetails?.judge as any)?.profile?.full_name || (currentJudgeDetails?.judge as any)?.full_name || (currentJudgeDetails?.judge as any)?.email || 'J'"
@@ -1916,7 +1908,7 @@ function statusLabel(status: string) {
                       <TableCell class="py-2">
                         <Input v-model="judgeEditDraft.notes" placeholder="Observaciones…" class="h-8 text-sm border-2 border-zinc-300 dark:border-zinc-600 rounded-lg" />
                       </TableCell>
-                      <TableCell class="py-2 pr-3">
+                      <TableCell class="py-2 pr-3 w-20 whitespace-nowrap">
                         <div class="flex items-center gap-1 justify-end">
                           <Button size="icon" variant="ghost" class="h-7 w-7 text-zinc-400 hover:text-zinc-700" @click="cancelEditingParticipant">
                             <X class="w-3.5 h-3.5" />
@@ -2113,9 +2105,9 @@ function statusLabel(status: string) {
 
     <!-- ── Promotion modal ──────────────────────────────────────────────────── -->
     <Dialog v-model:open="isPromotionModalOpen" @update:open="(v) => { if (!v) { promotionSearchQuery = ''; promotionPage = 1 } }">
-      <DialogContent class="max-w-2xl rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
+      <DialogContent class="max-w-2xl max-h-[90dvh] flex flex-col gap-0 rounded-2xl overflow-hidden p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
         <!-- Header -->
-        <div class="p-6 pr-16 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center gap-4">
+        <div class="shrink-0 p-6 pr-16 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 flex items-center gap-4">
           <div class="w-11 h-11 rounded-xl bg-zinc-900 dark:bg-zinc-100 flex items-center justify-center shadow-sm shrink-0">
             <Trophy class="w-5 h-5 text-white dark:text-zinc-900" />
           </div>
@@ -2125,8 +2117,10 @@ function statusLabel(status: string) {
           </div>
         </div>
 
+        <!-- Scrollable body: the header and the footer stay in view -->
+        <div class="flex-1 min-h-0 overflow-y-auto">
         <!-- Config row -->
-        <div class="px-6 pt-5 grid grid-cols-2 gap-4">
+        <div class="px-6 pt-5">
           <div class="flex items-center justify-between p-4 bg-zinc-50 dark:bg-zinc-900 rounded-xl border-2 border-zinc-100 dark:border-zinc-800">
             <div class="flex flex-col">
               <span class="text-sm font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Ayuda: marcar los mejores</span>
@@ -2228,8 +2222,10 @@ function statusLabel(status: string) {
           </div>
         </div>
 
+        </div>
+
         <!-- Footer -->
-        <div class="p-5 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 flex items-center justify-between gap-4">
+        <div class="shrink-0 p-5 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 flex items-center justify-between gap-4">
           <span class="text-[11px] font-bold text-zinc-400 uppercase tracking-widest">
             {{ selectedPromotionCount }} de {{ allPromotionParticipants.length }} seleccionado{{ selectedPromotionCount !== 1 ? 's' : '' }} · sin cupo
           </span>

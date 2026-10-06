@@ -102,6 +102,11 @@ export default defineEventHandler(async (event) => {
   if (error?.code === '23514') {
     throw createError({ statusCode: 400, statusMessage: 'end_not_after_start', message: SESSION_WINDOW_MESSAGES.end_not_after_start })
   }
+  // rounds_one_final_per_category: another round of the category is already
+  // the final. Say so instead of a bare 500.
+  if (error?.code === '23505' && updates.is_final === true) {
+    throw createError({ statusCode: 409, statusMessage: 'final_round_exists', message: 'Ya hay otra ronda marcada como final en esta categoría' })
+  }
   if (error) { console.error("[api error]", error.message); throw createError({ statusCode: 500, statusMessage: "internal_error" }) }
 
   // Send ranking_published emails (fire-and-forget)

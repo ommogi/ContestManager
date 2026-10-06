@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Users, ListTree, Activity, Calendar, CalendarClock, Settings2, Trophy, Swords, CalendarRange, Zap, Lock, Search, ChevronRight, Grid3x3, List, Link2, Check, Play, Loader2, Trash2, Pencil, Save } from 'lucide-vue-next'
+import { Users, ListTree, Activity, Calendar, CalendarClock, Settings2, Trophy, Swords, CalendarRange, Zap, Lock, Search, ChevronRight, Grid3x3, List, Link2, Check, Play, Loader2, Trash2, Pencil, Save } from 'lucide-vue-next'
 import RichEditor from '@/components/ui/rich-editor/RichEditor.vue'
 import { marked } from 'marked'
 import { toast } from 'vue-sonner'
@@ -317,9 +317,6 @@ async function confirmDeleteCategory() {
 
       <!-- Bottom: title + back + description + dates -->
       <div class="absolute bottom-0 left-0 right-0 p-6 flex items-end gap-3">
-        <NuxtLink to="/contests" class="p-1 rounded-md hover:bg-white/10 transition-colors shrink-0">
-          <ArrowLeft class="w-4 h-4 text-white drop-shadow-md" />
-        </NuxtLink>
         <div class="flex-1 min-w-0">
           <h1 class="text-2xl md:text-4xl font-bold tracking-tight uppercase text-white drop-shadow-md">
             {{ currentContest?.name || 'Cargando...' }}
