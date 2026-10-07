@@ -1,22 +1,25 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { VOTING_SYSTEMS, type VotingSystem } from '~~/shared/voting'
+import type { JudgePoolMember } from '~~/types'
 import { storeToRefs } from 'pinia'
+import { useMediaQuery } from '@vueuse/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
-  ArrowLeft, ArrowRight, Music, Calendar as CalendarIcon, Loader2,
-  Plus, Trash2, Users, Check, Search, CheckCircle2, ChevronRight, ChevronLeft,
+  ArrowLeft, ArrowRight, Calendar as CalendarIcon, Loader2, Plus, Trash2, Users,
+  Check, Search, ChevronRight, ChevronLeft, Hash, ThumbsUp, Info, Music, X,
 } from 'lucide-vue-next'
 import AvatarBubble from '@/components/ui/avatar/AvatarBubble.vue'
+import NumberStepper from '@/components/common/NumberStepper.vue'
 import RichEditor from '@/components/ui/rich-editor/RichEditor.vue'
 import { apiClient } from '@/api/apiClient'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RangeCalendar } from '@/components/ui/range-calendar'
 import { DateFormatter, getLocalTimeZone } from '@internationalized/date'
@@ -29,17 +32,38 @@ const contestStore = useContestStore()
 const judgePoolStore = useJudgePoolStore()
 const router = useRouter()
 
-const df = new DateFormatter('es-ES', { dateStyle: 'medium' })
+const df = new DateFormatter('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
+const isDesktop = useMediaQuery('(min-width: 768px)')
 
-// ── Step tracking ────────────────────────────────────────────────────────────
-// 1 = info, 2 = description, 3 = reglamento, 4 = categories
+// ── Steps ────────────────────────────────────────────────────────────────────
+// Nothing is saved until «Crear concurso» on the last step, so every step can
+// be revisited freely.
+const steps = [
+  { label: 'Datos básicos', sub: 'Nombre, fechas y votación' },
+  { label: 'Presentación', sub: 'Descripción y reglamento' },
+  { label: 'Categorías y jurado', sub: 'Disciplinas y evaluadores' },
+]
 const step = ref(1)
+const maxReached = ref(1)
+const currentStep = computed(() => steps[step.value - 1]!)
 
 // ── Form data ────────────────────────────────────────────────────────────────
-const isCreating = ref(false)
-// KAN-23: the jury's interface follows this choice, so it is made up front.
+// KAN-23: the jury's interface follows the voting system, so it is chosen up front.
 const formData = ref({ name: '', short_description: '', rules: '', voting_system: 'numeric' as VotingSystem })
 const dateRange = ref({ start: undefined, end: undefined }) as Ref<DateRange>
+const dateOpen = ref(false)
+
+const dateLabel = computed(() => {
+  const { start, end } = dateRange.value
+  if (!start) return ''
+  const from = df.format(start.toDate(getLocalTimeZone()))
+  return end ? `${from} — ${df.format(end.toDate(getLocalTimeZone()))}` : `${from} — …`
+})
+
+function onRangeUpdate(range: DateRange) {
+  dateRange.value = range
+  if (range.start && range.end) dateOpen.value = false
+}
 
 const isStep1Valid = computed(() =>
   formData.value.name.trim() !== '' &&
@@ -47,126 +71,105 @@ const isStep1Valid = computed(() =>
   !!dateRange.value.end
 )
 
-const createdContest = ref<{ id: string; slug: string } | null>(null)
-
-// Move from step 1 → 2 (no API call yet)
-function nextFromInfo() {
-  if (!isStep1Valid.value) return
-  step.value = 2
+function isStepValid(n: number) {
+  return n === 1 ? isStep1Valid.value : true
 }
 
-// Move from step 3 → 4: create contest with all collected data
-async function finishContentAndCreate() {
-  if (!isStep1Valid.value || isCreating.value) return
-  isCreating.value = true
-  try {
-    const data = await contestStore.createContest({
-      name: formData.value.name.trim(),
-      short_description: formData.value.short_description || '',
-      prizes: '',
-      rules: formData.value.rules || '',
-      is_rounds_dynamic: true,
-      mode: 'standard',
-      starts_at: dateRange.value.start?.toString(),
-      ends_at: dateRange.value.end?.toString(),
-      voting_system: formData.value.voting_system,
-    })
-    createdContest.value = { id: data.id, slug: data.slug }
-    toast.success('¡Concurso creado!')
-    step.value = 4
-    loadJudgePool()
-  } catch (e: any) {
-    toast.error(e?.data?.statusMessage || 'Error al crear el concurso')
-  } finally {
-    isCreating.value = false
+function canGoTo(n: number) {
+  if (n <= maxReached.value) return n === 1 || isStep1Valid.value
+  return n === step.value + 1 && isStepValid(step.value)
+}
+
+function goTo(n: number) {
+  if (!canGoTo(n)) return
+  step.value = n
+  maxReached.value = Math.max(maxReached.value, n)
+}
+
+function next() {
+  if (step.value < steps.length) goTo(step.value + 1)
+}
+
+function back() {
+  if (step.value > 1) step.value--
+  else router.back()
+}
+
+// ── Step 2 – Presentation ────────────────────────────────────────────────────
+const contentTab = ref<'description' | 'rules'>('description')
+function hasText(html: string) {
+  return html.replace(/<[^>]*>/g, '').trim() !== ''
+}
+
+// ── Step 3 – Categories (kept locally until creation) ────────────────────────
+interface CategoryDraft { key: string; name: string; min_age: number | null; max_age: number | null; max_participants: number | null }
+
+const categories = ref<CategoryDraft[]>([])
+const categoryName = ref('')
+const categoryMinAge = ref<number>()
+const categoryMaxAge = ref<number>()
+const categoryMaxParticipants = ref<number>()
+
+function num(v: number | undefined): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
+const categoryAgeError = computed(() => {
+  const min = num(categoryMinAge.value), max = num(categoryMaxAge.value)
+  return min != null && max != null && min > max
+})
+
+function addCategory() {
+  const name = categoryName.value.trim()
+  if (!name || categoryAgeError.value) return
+  if (categories.value.some(c => c.name.toLowerCase() === name.toLowerCase())) {
+    toast.error('Ya hay una categoría con ese nombre')
+    return
   }
+  categories.value.push({
+    key: crypto.randomUUID(),
+    name,
+    min_age: num(categoryMinAge.value),
+    max_age: num(categoryMaxAge.value),
+    max_participants: num(categoryMaxParticipants.value),
+  })
+  categoryName.value = ''
+  categoryMinAge.value = undefined
+  categoryMaxAge.value = undefined
+  categoryMaxParticipants.value = undefined
 }
 
-// ── Step 4 – Categories ──────────────────────────────────────────────────────
-interface CategoryEntry { id: string; name: string; min_age: number | null; max_age: number | null; max_participants: number | null; entry_fee_cents: number | null; judges: JudgeEntry[] }
-interface JudgeEntry { memberId: string; poolId: string; name: string; email: string }
-
-const categories = ref<CategoryEntry[]>([])
-const categoryInput = ref('')
-const categoryMinAge = ref<number | null>(null)
-const categoryMaxAge = ref<number | null>(null)
-const categoryMaxParticipants = ref<number | null>(null)
-const categoryEntryFee = ref<number | null>(null)
-const isAddingCategory = ref(false)
-
-async function addCategory() {
-  const name = categoryInput.value.trim()
-  if (!name || !createdContest.value || isAddingCategory.value) return
-  isAddingCategory.value = true
-  try {
-    const body: Record<string, any> = { name }
-    if (categoryMinAge.value != null) body.min_age = categoryMinAge.value
-    if (categoryMaxAge.value != null) body.max_age = categoryMaxAge.value
-    if (categoryMaxParticipants.value != null) body.max_participants = categoryMaxParticipants.value
-    if (categoryEntryFee.value != null) body.entry_fee_cents = categoryEntryFee.value * 100
-
-    const data = await (apiClient as any)(`/api/contests/${createdContest.value.id}/categories`, {
-      method: 'POST', body,
-    })
-    const cat: CategoryEntry = { id: data.id, name: data.name, min_age: data.min_age ?? null, max_age: data.max_age ?? null, max_participants: data.max_participants ?? null, entry_fee_cents: data.entry_fee_cents ?? null, judges: [] }
-    categories.value.push(cat)
-    categoryInput.value = ''
-    categoryMinAge.value = null
-    categoryMaxAge.value = null
-    categoryMaxParticipants.value = null
-    categoryEntryFee.value = null
-    pendingCategoryId.value = cat.id
-    judgePickerOpen.value = true
-  } catch (e: any) {
-    toast.error(e?.data?.statusMessage || 'Error al crear la categoría')
-  } finally {
-    isAddingCategory.value = false
-  }
+function removeCategory(key: string) {
+  categories.value = categories.value.filter(c => c.key !== key)
 }
 
-async function removeCategory(catId: string) {
-  try {
-    await apiClient(`/api/categories/${catId}`, { method: 'DELETE' })
-    categories.value = categories.value.filter(c => c.id !== catId)
-    toast.success('Categoría eliminada')
-  } catch (e: any) {
-    toast.error(e?.data?.statusMessage || 'Error al eliminar la categoría')
-  }
+function ageLabel(c: CategoryDraft) {
+  if (c.min_age == null && c.max_age == null) return 'Todas las edades'
+  if (c.min_age != null && c.max_age != null) return `${c.min_age}–${c.max_age} años`
+  return c.min_age != null ? `Desde ${c.min_age} años` : `Hasta ${c.max_age} años`
 }
 
-// ── Judge Pool ───────────────────────────────────────────────────────────────
+// ── Step 3 – Contest jury (picked from the pool, kept locally) ───────────────
+// The jury belongs to the whole contest, not to a category.
 const { items: judgePool, isFetching: isLoadingPool } = storeToRefs(judgePoolStore)
+const selectedJudges = ref<JudgePoolMember[]>([])
 
-async function loadJudgePool() {
-  await judgePoolStore.fetchPool()
-}
+watch(step, (s) => { if (s === 3) judgePoolStore.fetchPool() }, { immediate: true })
 
-// ── Judge Picker Dialog ──────────────────────────────────────────────────────
 const judgePickerOpen = ref(false)
-const pendingCategoryId = ref<string | null>(null)
-const selectedJudgePoolIds = ref<Set<string>>(new Set())
+const pickerSelection = ref<Set<string>>(new Set())
 const judgeSearch = ref('')
-const isSavingJudges = ref(false)
 const judgePickerPage = ref(1)
 const JUDGE_PAGE_SIZE = 6
 
-const initialJudgePoolIds = ref<Set<string>>(new Set())
-
 watch(judgePickerOpen, (open) => {
   if (open) {
-    const cat = categories.value.find(c => c.id === pendingCategoryId.value)
-    const preset = new Set<string>(cat ? cat.judges.map(j => j.poolId) : [])
-    selectedJudgePoolIds.value = new Set(preset)
-    initialJudgePoolIds.value = preset
+    pickerSelection.value = new Set(selectedJudges.value.map(j => j.id))
   } else {
-    selectedJudgePoolIds.value = new Set()
-    initialJudgePoolIds.value = new Set()
     judgeSearch.value = ''
     judgePickerPage.value = 1
-    pendingCategoryId.value = null
   }
 })
-
 watch(judgeSearch, () => { judgePickerPage.value = 1 })
 
 const filteredPool = computed(() => {
@@ -178,616 +181,518 @@ const filteredPool = computed(() => {
     j.specialty?.toLowerCase().includes(q)
   )
 })
-
-const judgePickerPageCount = computed(() =>
-  Math.max(1, Math.ceil(filteredPool.value.length / JUDGE_PAGE_SIZE))
-)
-
+const judgePickerPageCount = computed(() => Math.max(1, Math.ceil(filteredPool.value.length / JUDGE_PAGE_SIZE)))
 const paginatedPool = computed(() => {
   const start = (judgePickerPage.value - 1) * JUDGE_PAGE_SIZE
   return filteredPool.value.slice(start, start + JUDGE_PAGE_SIZE)
 })
-
-const judgesToAddCount = computed(() => {
-  let n = 0
-  for (const id of selectedJudgePoolIds.value) {
-    if (!initialJudgePoolIds.value.has(id)) n++
-  }
-  return n
-})
-const judgesToRemoveCount = computed(() => {
-  let n = 0
-  for (const id of initialJudgePoolIds.value) {
-    if (!selectedJudgePoolIds.value.has(id)) n++
-  }
-  return n
-})
-const judgesDiffCount = computed(() => judgesToAddCount.value + judgesToRemoveCount.value)
-
 watch(judgePickerPageCount, (count) => {
   if (judgePickerPage.value > count) judgePickerPage.value = count
 })
 
-function toggleJudge(judge: PoolJudge) {
-  const s = new Set(selectedJudgePoolIds.value)
-  if (s.has(judge.id)) s.delete(judge.id)
-  else s.add(judge.id)
-  selectedJudgePoolIds.value = s
+function toggleJudge(id: string) {
+  const s = new Set(pickerSelection.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  pickerSelection.value = s
 }
 
-const addedPoolIds = computed(() => {
-  const ids = new Set<string>()
-  for (const cat of categories.value) {
-    for (const j of cat.judges) ids.add(j.poolId)
-  }
-  return ids
-})
-
-async function confirmJudges() {
-  if (!createdContest.value || isSavingJudges.value) return
-  const catId = pendingCategoryId.value
-  if (!catId) { judgePickerOpen.value = false; return }
-  const cat = categories.value.find(c => c.id === catId)
-  if (!cat) { judgePickerOpen.value = false; return }
-
-  const toAdd = judgePool.value.filter(j =>
-    selectedJudgePoolIds.value.has(j.id) && !initialJudgePoolIds.value.has(j.id)
-  )
-  const toRemove = cat.judges.filter(j =>
-    initialJudgePoolIds.value.has(j.poolId) && !selectedJudgePoolIds.value.has(j.poolId)
-  )
-
-  if (!toAdd.length && !toRemove.length) { judgePickerOpen.value = false; return }
-
-  isSavingJudges.value = true
-  try {
-    const contestId = createdContest.value!.id
-
-    const [addResults] = await Promise.all([
-      toAdd.length
-        ? Promise.all(toAdd.map(j =>
-            (apiClient as any)(`/api/contests/${contestId}/members`, {
-              method: 'POST',
-              body: { email: j.email, full_name: j.full_name, role: 'judge' },
-            })
-          ))
-        : Promise.resolve([] as any[]),
-      toRemove.length
-        ? Promise.all(toRemove.map(j =>
-            (apiClient as any)(`/api/contests/${contestId}/members/${j.memberId}`, { method: 'DELETE' })
-          ))
-        : Promise.resolve([]),
-    ])
-
-    if (toRemove.length) {
-      const removedPoolIds = new Set(toRemove.map(j => j.poolId))
-      cat.judges = cat.judges.filter(j => !removedPoolIds.has(j.poolId))
-    }
-    for (let i = 0; i < toAdd.length; i++) {
-      cat.judges.push({
-        memberId: (addResults as any[])[i].id,
-        poolId: toAdd[i].id,
-        name: toAdd[i].full_name,
-        email: toAdd[i].email,
-      })
-    }
-
-    const parts: string[] = []
-    if (toAdd.length) parts.push(`${toAdd.length} añadido(s)`)
-    if (toRemove.length) parts.push(`${toRemove.length} quitado(s)`)
-    toast.success(`Jurados: ${parts.join(', ')}`)
-    judgePickerOpen.value = false
-  } catch (e: any) {
-    toast.error(e?.data?.statusMessage || 'Error al guardar jurados')
-  } finally {
-    isSavingJudges.value = false
-  }
-}
-
-function skipJudges() {
+function confirmJudges() {
+  selectedJudges.value = judgePool.value.filter(j => pickerSelection.value.has(j.id))
   judgePickerOpen.value = false
 }
 
-function finish() {
-  if (createdContest.value?.slug) navigateTo(`/contests/${createdContest.value.slug}`)
-  else navigateTo('/contests')
+function removeJudge(id: string) {
+  selectedJudges.value = selectedJudges.value.filter(j => j.id !== id)
 }
 
-// ── Stepper config ────────────────────────────────────────────────────────────
-const steps = [
-  { label: 'Información', sub: 'Nombre y fechas' },
-  { label: 'Descripción', sub: 'Texto de presentación' },
-  { label: 'Reglamento', sub: 'Normas del concurso' },
-  { label: 'Categorías', sub: 'Disciplinas y jurados' },
-]
-// progress width as % of container (track: left-[12.5%] → right-[12.5%] = 75% wide)
-const progressWidth = computed(() => `${(step.value - 1) * 25}%`)
+// ── Create ───────────────────────────────────────────────────────────────────
+const isCreating = ref(false)
+const created = ref(false)
+
+async function createContest() {
+  if (!isStep1Valid.value || isCreating.value) return
+  isCreating.value = true
+  let slug: string | null = null
+  try {
+    const contest = await contestStore.createContest({
+      name: formData.value.name.trim(),
+      short_description: formData.value.short_description || '',
+      prizes: '',
+      rules: formData.value.rules || '',
+      is_rounds_dynamic: true,
+      mode: 'standard',
+      starts_at: dateRange.value.start?.toString(),
+      ends_at: dateRange.value.end?.toString(),
+      voting_system: formData.value.voting_system,
+    })
+    slug = contest.slug
+    created.value = true
+
+    const failures: string[] = []
+
+    // Sequential, so the categories keep the order they were added in.
+    for (const c of categories.value) {
+      const body: Record<string, any> = { name: c.name }
+      if (c.min_age != null) body.min_age = c.min_age
+      if (c.max_age != null) body.max_age = c.max_age
+      if (c.max_participants != null) body.max_participants = c.max_participants
+      try {
+        await (apiClient as any)(`/api/contests/${contest.id}/categories`, { method: 'POST', body })
+      } catch {
+        failures.push(`categoría «${c.name}»`)
+      }
+    }
+
+    const judgeResults = await Promise.allSettled(selectedJudges.value.map(j =>
+      (apiClient as any)(`/api/contests/${contest.id}/members`, {
+        method: 'POST',
+        body: { email: j.email, full_name: j.full_name, role: 'judge' },
+      })
+    ))
+    judgeResults.forEach((r, i) => {
+      if (r.status === 'rejected') failures.push(`jurado ${selectedJudges.value[i]!.full_name || selectedJudges.value[i]!.email}`)
+    })
+
+    if (failures.length) {
+      toast.warning('Concurso creado con incidencias', {
+        description: `No se pudo añadir: ${failures.join(', ')}. Complétalo desde el panel del concurso.`,
+      })
+    } else {
+      toast.success('¡Concurso creado!')
+    }
+    await navigateTo(`/contests/${slug}`)
+  } catch (e: any) {
+    if (slug) {
+      await navigateTo(`/contests/${slug}`)
+    } else {
+      toast.error(e?.data?.statusMessage || 'Error al crear el concurso')
+    }
+  } finally {
+    isCreating.value = false
+  }
+}
+
+// ── Leave guard ──────────────────────────────────────────────────────────────
+const isDirty = computed(() =>
+  formData.value.name.trim() !== '' ||
+  !!dateRange.value.start ||
+  hasText(formData.value.short_description) ||
+  hasText(formData.value.rules) ||
+  categories.value.length > 0 ||
+  selectedJudges.value.length > 0
+)
+
+onBeforeRouteLeave(() => {
+  if (created.value || !isDirty.value) return true
+  return window.confirm('¿Salir sin crear el concurso? Se perderán los datos introducidos.')
+})
 </script>
 
 <template>
-  <div class="max-w-5xl mx-auto py-12 px-4 space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+  <!-- Same spacing as /contests: the layout's padding only. pb-24 leaves room for the pinned footer on phones. -->
+  <div class="max-w-7xl pb-24 md:pb-0">
 
     <!-- Header -->
-    <div class="flex items-start justify-between gap-4">
-      <div>
-        <h1 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Nuevo concurso</h1>
-        <p class="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Configura los datos básicos y añade categorías.</p>
-      </div>
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
-        @click="router.back()"
-      >
-        <ArrowLeft class="w-4 h-4" />
-        Volver
-      </button>
+    <div class="space-y-1 mb-8">
+      <h1 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">Nuevo concurso</h1>
+      <p class="text-muted-foreground">Nada se guarda hasta que pulses «Crear concurso».</p>
     </div>
 
-    <!-- 4-step progress stepper -->
-    <div class="relative">
-      <!-- Track -->
-      <div class="absolute top-5 left-[12.5%] right-[12.5%] h-px bg-zinc-200 dark:bg-zinc-800" />
-      <!-- Progress fill -->
-      <div
-        class="absolute top-5 left-[12.5%] h-px bg-zinc-900 dark:bg-zinc-100 transition-all duration-500"
-        :style="{ width: progressWidth }"
-      />
-      <ol class="relative grid grid-cols-4 gap-2">
-        <li
-          v-for="(s, i) in steps"
-          :key="i"
-          class="flex flex-col items-center gap-2"
-        >
-          <div
-            class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold transition-all border-2"
-            :class="step > i + 1
-              ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20'
-              : step === i + 1
-                ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 border-zinc-900 dark:border-zinc-100 shadow-md shadow-zinc-900/20 dark:shadow-zinc-100/10'
-                : 'bg-white dark:bg-zinc-950 text-zinc-400 border-zinc-200 dark:border-zinc-800'"
-          >
-            <CheckCircle2 v-if="step > i + 1" class="w-5 h-5" />
-            <span v-else>{{ i + 1 }}</span>
-          </div>
-          <div class="text-center">
-            <p
-              class="text-xs font-semibold leading-tight"
-              :class="step >= i + 1 ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-400'"
-            >{{ s.label }}</p>
-            <p class="text-[10px] text-zinc-400 mt-0.5 hidden sm:block">{{ s.sub }}</p>
-          </div>
-        </li>
-      </ol>
+    <!-- Mobile progress -->
+    <div class="lg:hidden mb-4">
+      <div class="flex items-baseline justify-between text-sm">
+        <p class="font-semibold text-zinc-900 dark:text-zinc-100">{{ currentStep.label }}</p>
+        <p class="text-xs text-zinc-500 tabular-nums">Paso {{ step }} de {{ steps.length }}</p>
+      </div>
+      <div class="mt-2 h-1 rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+        <div
+          class="h-full bg-zinc-900 dark:bg-zinc-100 transition-all duration-300"
+          :style="{ width: `${(step / steps.length) * 100}%` }"
+        />
+      </div>
     </div>
 
-    <!-- ── STEP 1: Contest Info ──────────────────────────────────────────────── -->
-    <div v-if="step === 1" class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
+    <div class="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)] items-start">
 
-      <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
-        <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Datos del concurso</h2>
-        <p class="text-xs text-zinc-500 mt-0.5">Nombre y duración del concurso.</p>
-      </div>
-
-      <form class="px-8 py-7" @submit.prevent="nextFromInfo">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-7">
-          <!-- Name -->
-          <div class="space-y-1.5">
-            <Label for="name" class="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Nombre del concurso <span class="text-red-500">*</span>
-            </Label>
-            <Input
-              id="name"
-              v-model="formData.name"
-              placeholder="Ej. Concurso Internacional de Piano 2026"
-              class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
-              autofocus
+      <!-- Desktop stepper -->
+      <nav aria-label="Pasos" class="hidden lg:block sticky top-6">
+        <ol>
+          <li v-for="(s, i) in steps" :key="i" class="relative pb-6 last:pb-0">
+            <div
+              v-if="i < steps.length - 1"
+              class="absolute left-4 top-9 -bottom-1 w-px -translate-x-1/2"
+              :class="step > i + 1 ? 'bg-zinc-900 dark:bg-zinc-100' : 'bg-zinc-200 dark:bg-zinc-800'"
             />
+            <button
+              type="button"
+              class="relative flex items-start gap-3 text-left w-full rounded-lg disabled:cursor-not-allowed group"
+              :disabled="!canGoTo(i + 1) && step !== i + 1"
+              :aria-current="step === i + 1 ? 'step' : undefined"
+              @click="goTo(i + 1)"
+            >
+              <span
+                class="w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm font-semibold border transition-colors"
+                :class="step === i + 1
+                  ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 border-zinc-900 dark:border-zinc-100'
+                  : step > i + 1 || maxReached > i + 1
+                    ? 'bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 border-zinc-900 dark:border-zinc-100'
+                    : 'bg-white dark:bg-zinc-950 text-zinc-400 border-zinc-200 dark:border-zinc-800'"
+              >
+                <Check v-if="step > i + 1" class="w-4 h-4" />
+                <span v-else>{{ i + 1 }}</span>
+              </span>
+              <span class="pt-1 min-w-0">
+                <span
+                  class="block text-sm font-semibold leading-tight"
+                  :class="step >= i + 1 || maxReached > i ? 'text-zinc-900 dark:text-zinc-100 group-hover:underline group-disabled:no-underline' : 'text-zinc-400'"
+                >{{ s.label }}</span>
+                <span class="block text-xs text-zinc-500 mt-0.5">{{ s.sub }}</span>
+              </span>
+            </button>
+          </li>
+        </ol>
+      </nav>
+
+      <!-- Step card -->
+      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shadow-sm">
+
+        <!-- ── STEP 1: Basic data ─────────────────────────────────────────── -->
+        <form v-if="step === 1" class="p-4 sm:p-6 flex flex-col gap-6" @submit.prevent="next">
+          <div class="hidden lg:block">
+            <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-100">Datos básicos</h2>
+            <p class="text-sm text-zinc-500 mt-0.5">Cómo se llama, cuándo se celebra y cómo puntúa el jurado.</p>
           </div>
 
-          <!-- Voting system (KAN-23) -->
-          <div class="space-y-1.5">
-            <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Sistema de votación</Label>
-            <div class="grid sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Sistema de votación">
+          <div class="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <div class="space-y-1.5">
+              <Label for="name" class="text-sm font-medium">
+                Nombre del concurso <span class="text-red-500">*</span>
+              </Label>
+              <Input
+                id="name"
+                v-model="formData.name"
+                placeholder="Ej. Concurso Internacional de Piano 2026"
+                class="h-11"
+                autofocus
+              />
+            </div>
+
+            <div class="space-y-1.5">
+              <Label class="text-sm font-medium">
+                Fechas del concurso <span class="text-red-500">*</span>
+              </Label>
+              <Popover v-model:open="dateOpen">
+                <PopoverTrigger as-child>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    class="w-full h-11 justify-start font-normal"
+                    :class="!dateRange.start && 'text-muted-foreground'"
+                  >
+                    <CalendarIcon class="w-4 h-4 mr-2 shrink-0" />
+                    <span class="truncate">{{ dateLabel || 'Selecciona el inicio y el fin' }}</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent class="w-auto max-w-[calc(100vw-2rem)] p-0" align="end">
+                  <RangeCalendar
+                    :model-value="dateRange"
+                    :number-of-months="isDesktop ? 2 : 1"
+                    locale="es-ES"
+                    :week-starts-on="1"
+                    @update:model-value="onRangeUpdate"
+                    @update:start-value="(startDate) => dateRange.start = startDate"
+                  />
+                </PopoverContent>
+              </Popover>
+              <p class="text-xs text-zinc-500">La edad de los participantes se calcula a la fecha de inicio.</p>
+            </div>
+          </div>
+
+          <fieldset class="space-y-2">
+            <legend class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-2">Sistema de votación</legend>
+            <div class="grid sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Sistema de votación">
               <button
                 v-for="system in VOTING_SYSTEMS"
                 :key="system.id"
                 type="button"
                 role="radio"
                 :aria-checked="formData.voting_system === system.id"
-                class="text-left p-3 rounded-xl border-2 transition-colors"
+                class="relative flex items-start gap-3 text-left p-4 rounded-xl border transition-colors"
                 :class="formData.voting_system === system.id
-                  ? 'border-zinc-900 dark:border-zinc-100 bg-zinc-50 dark:bg-zinc-900'
-                  : 'border-zinc-100 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-600'"
+                  ? 'border-zinc-900 dark:border-zinc-100 ring-1 ring-zinc-900 dark:ring-zinc-100 bg-zinc-50 dark:bg-zinc-900'
+                  : 'border-zinc-200 dark:border-zinc-800 hover:border-zinc-400 dark:hover:border-zinc-600'"
                 @click="formData.voting_system = system.id"
               >
-                <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">{{ system.label }}</span>
-                <span class="block text-xs text-zinc-500 mt-0.5">{{ system.description }}</span>
+                <span class="w-9 h-9 shrink-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                  <Hash v-if="system.id === 'numeric'" class="w-4 h-4 text-zinc-700 dark:text-zinc-300" />
+                  <ThumbsUp v-else class="w-4 h-4 text-zinc-700 dark:text-zinc-300" />
+                </span>
+                <span class="min-w-0 pr-5">
+                  <span class="block text-sm font-semibold text-zinc-900 dark:text-zinc-100">{{ system.label }}</span>
+                  <span class="block text-xs text-zinc-500 mt-0.5">{{ system.description }}</span>
+                </span>
+                <Check
+                  v-if="formData.voting_system === system.id"
+                  class="absolute top-3 right-3 w-4 h-4 text-zinc-900 dark:text-zinc-100"
+                />
               </button>
             </div>
-            <p class="text-xs text-zinc-400">No se puede cambiar una vez el jurado haya puntuado.</p>
+            <p class="flex items-center gap-1.5 text-xs text-zinc-500">
+              <Info class="w-3.5 h-3.5 shrink-0" />
+              No se puede cambiar una vez el jurado haya puntuado.
+            </p>
+          </fieldset>
+          <button type="submit" class="hidden" />
+        </form>
+
+        <!-- ── STEP 2: Presentation ───────────────────────────────────────── -->
+        <div v-else-if="step === 2" class="p-4 sm:p-6 flex flex-col gap-4">
+          <div class="hidden lg:block">
+            <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-100">Presentación</h2>
+            <p class="text-sm text-zinc-500 mt-0.5">Lo que leerán los participantes al inscribirse. Opcional: puedes completarlo más tarde.</p>
           </div>
+          <p class="lg:hidden text-sm text-zinc-500">Lo que leerán los participantes al inscribirse. Opcional.</p>
 
-          <!-- Dates -->
-          <div class="space-y-1.5">
-            <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
-              <CalendarIcon class="w-4 h-4 text-zinc-400" />
-              Fechas del concurso <span class="text-red-500">*</span>
-            </Label>
-            <div v-if="dateRange.start && dateRange.end" class="flex items-center justify-between text-sm text-zinc-600 dark:text-zinc-400 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800">
-              <span class="font-medium">{{ df.format(dateRange.start.toDate(getLocalTimeZone())) }} — {{ df.format(dateRange.end.toDate(getLocalTimeZone())) }}</span>
-              <button type="button" class="text-xs text-zinc-400 hover:text-red-500 transition-colors" @click="dateRange = { start: undefined, end: undefined }">
-                Borrar
-              </button>
-            </div>
-            <div class="p-4 bg-zinc-50/50 dark:bg-zinc-900/30 rounded-xl border border-zinc-100 dark:border-zinc-900 flex justify-center overflow-hidden">
-              <RangeCalendar
-                v-model="dateRange"
-                :number-of-months="1"
-                @update:start-value="(startDate) => dateRange.start = startDate"
+          <Tabs v-model="contentTab">
+            <TabsList class="w-full sm:w-auto grid grid-cols-2 sm:inline-grid">
+              <TabsTrigger value="description" class="gap-1.5">
+                Descripción
+                <span v-if="hasText(formData.short_description)" class="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              </TabsTrigger>
+              <TabsTrigger value="rules">
+                Reglamento
+                <span v-if="hasText(formData.rules)" class="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="description" class="mt-4">
+              <RichEditor
+                v-model="formData.short_description"
+                placeholder="Presenta el concurso: de qué trata, a quién va dirigido, premios, lugar..."
+                min-height="240px"
               />
-            </div>
-          </div>
-        </div>
-      </form>
-
-      <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
-        <Button type="button" variant="ghost" class="h-10 px-4 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" @click="router.back()">
-          Cancelar
-        </Button>
-        <Button
-          type="button"
-          :disabled="!isStep1Valid"
-          class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-          @click="nextFromInfo"
-        >
-          <span>Siguiente</span>
-          <ArrowRight class="w-4 h-4" />
-        </Button>
-      </div>
-    </div>
-
-    <!-- ── STEP 2: Description ────────────────────────────────────────────────── -->
-    <div v-if="step === 2" class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
-
-      <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
-        <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Descripción</h2>
-        <p class="text-xs text-zinc-500 mt-0.5">Presentación del concurso visible en la página pública. <span class="text-zinc-400">Opcional.</span></p>
-      </div>
-
-      <div class="px-8 py-7">
-        <RichEditor
-          v-model="formData.short_description"
-          placeholder="Presenta el concurso: de qué trata, a quién va dirigido, qué hace especial esta edición..."
-          min-height="280px"
-        />
-      </div>
-
-      <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
-        <Button type="button" variant="ghost" class="h-10 px-4 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 flex items-center gap-2" @click="step = 1">
-          <ArrowLeft class="w-4 h-4" />
-          Atrás
-        </Button>
-        <Button
-          type="button"
-          class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm flex items-center gap-2"
-          @click="step = 3"
-        >
-          <span>Siguiente</span>
-          <ArrowRight class="w-4 h-4" />
-        </Button>
-      </div>
-    </div>
-
-    <!-- ── STEP 3: Reglamento ─────────────────────────────────────────────────── -->
-    <div v-if="step === 3" class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
-
-      <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
-        <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Reglamento</h2>
-        <p class="text-xs text-zinc-500 mt-0.5">Normas de participación, requisitos de obras, criterios de evaluación. <span class="text-zinc-400">Opcional.</span></p>
-      </div>
-
-      <div class="px-8 py-7">
-        <RichEditor
-          v-model="formData.rules"
-          placeholder="Redacta las normas: requisitos de participación, formato de obras, criterios de puntuación..."
-          min-height="280px"
-        />
-      </div>
-
-      <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
-        <Button type="button" variant="ghost" class="h-10 px-4 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 flex items-center gap-2" @click="step = 2">
-          <ArrowLeft class="w-4 h-4" />
-          Atrás
-        </Button>
-        <Button
-          type="button"
-          :disabled="isCreating"
-          class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
-          @click="finishContentAndCreate"
-        >
-          <Loader2 v-if="isCreating" class="w-4 h-4 animate-spin" />
-          <span>{{ isCreating ? 'Creando…' : 'Siguiente' }}</span>
-          <ArrowRight v-if="!isCreating" class="w-4 h-4" />
-        </Button>
-      </div>
-    </div>
-
-    <!-- ── STEP 4: Categories ────────────────────────────────────────────────── -->
-    <div v-if="step === 4" class="space-y-5">
-
-      <!-- Contest created banner -->
-      <div class="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 px-4 py-3 flex items-center gap-3">
-        <CheckCircle2 class="w-5 h-5 text-emerald-500 shrink-0" />
-        <div class="flex-1 min-w-0">
-          <p class="text-sm font-semibold text-emerald-800 dark:text-emerald-200 truncate">Concurso «{{ formData.name }}» creado</p>
-          <p class="text-xs text-emerald-700/80 dark:text-emerald-400/80">Añade las categorías (piano, canto, violín…)</p>
-        </div>
-      </div>
-
-      <!-- Add category card -->
-      <div class="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden shadow-sm">
-        <div class="px-8 pt-7 pb-5 border-b border-zinc-100 dark:border-zinc-900">
-          <h2 class="text-base font-bold text-zinc-900 dark:text-zinc-100">Categorías</h2>
-          <p class="text-xs text-zinc-500 mt-0.5">Crea las disciplinas y asigna jurados a cada una.</p>
-        </div>
-
-        <div class="px-8 py-7 space-y-5">
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div class="space-y-1.5">
-              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Nombre <span class="text-red-500">*</span></Label>
-              <Input
-                v-model="categoryInput"
-                placeholder="Nombre de la categoría (ej. Piano Junior)"
-                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg focus-visible:ring-zinc-900 dark:focus-visible:ring-zinc-100"
-                @keydown.enter.prevent="addCategory"
+            </TabsContent>
+            <TabsContent value="rules" class="mt-4">
+              <RichEditor
+                v-model="formData.rules"
+                placeholder="Normas de participación, requisitos de obras, criterios de evaluación..."
+                min-height="240px"
               />
+              <p class="text-xs text-zinc-500 mt-2">Los participantes deberán aceptar el reglamento al inscribirse.</p>
+            </TabsContent>
+          </Tabs>
+        </div>
+
+        <!-- ── STEP 3: Categories and jury ────────────────────────────────── -->
+        <div v-else class="p-4 sm:p-6 space-y-8">
+          <!-- Categories -->
+          <section class="space-y-4">
+            <div>
+              <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-100">Categorías</h2>
+              <p class="text-sm text-zinc-500 mt-0.5">Por ejemplo «Piano junior» o «Cor mixt». Puedes añadir más desde el panel del concurso.</p>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="space-y-1.5">
-                <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Edad mínima</Label>
-                <Input
-                  v-model.number="categoryMinAge"
-                  type="number"
-                  placeholder="0"
-                  min="0"
-                  class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
-                />
+
+            <form class="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_132px_132px_152px_auto] gap-3 items-end" @submit.prevent="addCategory">
+              <div class="col-span-2 sm:col-span-1 space-y-1.5">
+                <Label for="cat-name" class="text-xs font-medium">Nombre <span class="text-red-500">*</span></Label>
+                <Input id="cat-name" v-model="categoryName" placeholder="Nombre de la categoría" class="h-10" />
               </div>
               <div class="space-y-1.5">
-                <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Edad máxima</Label>
-                <Input
-                  v-model.number="categoryMaxAge"
-                  type="number"
-                  placeholder="99"
-                  min="0"
-                  class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
-                />
+                <Label for="cat-min" class="text-xs font-medium">Edad mín.</Label>
+                <NumberStepper id="cat-min" v-model="categoryMinAge" :min="0" :max="120" placeholder="—" label="edad mínima" :invalid="categoryAgeError" />
               </div>
-            </div>
-            <div class="space-y-1.5">
-              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Cupos máximos</Label>
-              <Input
-                v-model.number="categoryMaxParticipants"
-                type="number"
-                placeholder="Sin límite"
-                min="1"
-                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
-              />
-            </div>
-            <div class="space-y-1.5">
-              <Label class="text-sm font-medium text-zinc-700 dark:text-zinc-300">Precio inscripción (€)</Label>
-              <Input
-                v-model.number="categoryEntryFee"
-                type="number"
-                placeholder="Gratis"
-                min="0"
-                step="0.01"
-                class="h-11 border-zinc-200 dark:border-zinc-800 rounded-lg"
-              />
-            </div>
-          </div>
-          <Button
-            :disabled="!categoryInput.trim() || isAddingCategory"
-            class="h-11 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm disabled:opacity-40 flex items-center gap-1.5 w-full"
-            @click="addCategory"
-          >
-            <Loader2 v-if="isAddingCategory" class="w-4 h-4 animate-spin" />
-            <Plus v-else class="w-4 h-4" />
-            Añadir categoría
-          </Button>
+              <div class="space-y-1.5">
+                <Label for="cat-max" class="text-xs font-medium">Edad máx.</Label>
+                <NumberStepper id="cat-max" v-model="categoryMaxAge" :min="categoryMinAge ?? 0" :max="120" placeholder="—" label="edad máxima" :invalid="categoryAgeError" />
+              </div>
+              <div class="space-y-1.5">
+                <Label for="cat-cap" class="text-xs font-medium">Plazas</Label>
+                <NumberStepper id="cat-cap" v-model="categoryMaxParticipants" :min="1" placeholder="Sin límite" label="plazas" />
+              </div>
+              <Button
+                type="submit"
+                variant="outline"
+                class="h-10 gap-1.5"
+                :disabled="!categoryName.trim() || categoryAgeError"
+              >
+                <Plus class="w-4 h-4" />
+                Añadir
+              </Button>
+            </form>
+            <p v-if="categoryAgeError" class="text-xs text-red-500 -mt-2">La edad mínima no puede ser mayor que la máxima.</p>
 
-          <div v-if="categories.length" class="space-y-2">
-            <div
-              v-for="cat in categories"
-              :key="cat.id"
-              class="rounded-xl border border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 px-4 py-3"
-            >
-              <div class="flex items-start justify-between gap-3">
+            <ul v-if="categories.length" class="divide-y divide-zinc-100 dark:divide-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-800">
+              <li v-for="c in categories" :key="c.key" class="flex items-center gap-3 px-4 py-3">
+                <Music class="w-4 h-4 text-zinc-400 shrink-0" />
                 <div class="flex-1 min-w-0">
-                  <p class="text-sm font-bold text-zinc-900 dark:text-zinc-100">{{ cat.name }}</p>
-                  <div class="flex flex-wrap gap-2 mt-1.5 text-[10px] text-zinc-500">
-                    <span v-if="cat.min_age != null || cat.max_age != null">
-                      Edad: {{ cat.min_age ?? 0 }}–{{ cat.max_age ?? '∞' }}
-                    </span>
-                    <span v-if="cat.max_participants != null">· {{ cat.max_participants }} cupos</span>
-                    <span v-if="cat.entry_fee_cents != null">· {{ (cat.entry_fee_cents / 100).toFixed(2) }}€</span>
-                  </div>
-                  <div v-if="cat.judges.length" class="flex flex-wrap gap-1.5 mt-2">
-                    <Badge
-                      v-for="j in cat.judges"
-                      :key="j.memberId"
-                      class="text-[9px] font-bold uppercase tracking-widest bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 px-2"
-                    >
-                      {{ j.name }}
-                    </Badge>
-                  </div>
-                  <p v-else class="text-xs text-zinc-400 mt-1">Sin jurados asignados</p>
+                  <p class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{{ c.name }}</p>
+                  <p class="text-xs text-zinc-500">
+                    {{ ageLabel(c) }} · {{ c.max_participants != null ? `${c.max_participants} plazas` : 'Plazas sin límite' }}
+                  </p>
                 </div>
-                <div class="flex items-center gap-1.5 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    class="h-7 px-2.5 text-[9px] font-bold uppercase tracking-widest text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                    @click="pendingCategoryId = cat.id; judgePickerOpen = true"
-                  >
-                    <Users class="w-3 h-3 mr-1" />
-                    Jurados
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    class="h-7 w-7 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20"
-                    @click="removeCategory(cat.id)"
-                  >
-                    <Trash2 class="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  class="h-8 w-8 text-zinc-400 hover:text-red-500"
+                  :aria-label="`Quitar ${c.name}`"
+                  @click="removeCategory(c.key)"
+                >
+                  <Trash2 class="w-4 h-4" />
+                </Button>
+              </li>
+            </ul>
+            <div v-else class="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 px-4 py-6 text-center">
+              <p class="text-sm text-zinc-500">Aún no hay categorías. Añade la primera con el formulario de arriba.</p>
             </div>
-          </div>
+          </section>
 
-          <div v-else class="rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 p-6 text-center">
-            <Music class="w-8 h-8 text-zinc-300 dark:text-zinc-600 mx-auto mb-2" />
-            <p class="text-sm text-zinc-400">Añade tu primera categoría arriba</p>
-          </div>
+          <!-- Jury -->
+          <section class="space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div>
+                <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-100">Jurado</h2>
+                <p class="text-sm text-zinc-500 mt-0.5">El jurado evalúa todas las categorías. Recibirán una invitación por email.</p>
+              </div>
+              <Button type="button" variant="outline" class="h-10 gap-1.5 shrink-0" @click="judgePickerOpen = true">
+                <Users class="w-4 h-4" />
+                Elegir del pool
+              </Button>
+            </div>
+
+            <div v-if="selectedJudges.length" class="flex flex-wrap gap-2">
+              <span
+                v-for="j in selectedJudges"
+                :key="j.id"
+                class="inline-flex items-center gap-2 rounded-full border border-zinc-200 dark:border-zinc-800 pl-1 pr-2 py-1 text-sm"
+              >
+                <AvatarBubble :name="j.full_name || j.email" :avatar-url="(j as any).avatar_url ?? null" size="w-6 h-6" text-size="text-[10px]" />
+                <span class="max-w-[160px] truncate text-zinc-900 dark:text-zinc-100">{{ j.full_name || j.email }}</span>
+                <button type="button" class="text-zinc-400 hover:text-red-500" :aria-label="`Quitar ${j.full_name || j.email}`" @click="removeJudge(j.id)">
+                  <X class="w-3.5 h-3.5" />
+                </button>
+              </span>
+            </div>
+            <p v-else class="text-sm text-zinc-500">Sin jurado por ahora. También puedes invitarlo más tarde.</p>
+          </section>
+
+          <!-- Summary -->
+          <section class="rounded-xl bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-100 dark:border-zinc-800 p-4">
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-3">Resumen</h3>
+            <dl class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-6 gap-y-2 text-sm">
+              <div class="flex justify-between gap-3 sm:block">
+                <dt class="text-zinc-500">Concurso</dt>
+                <dd class="font-medium text-zinc-900 dark:text-zinc-100 truncate">{{ formData.name }}</dd>
+              </div>
+              <div class="flex justify-between gap-3 sm:block">
+                <dt class="text-zinc-500">Fechas</dt>
+                <dd class="font-medium text-zinc-900 dark:text-zinc-100">{{ dateLabel }}</dd>
+              </div>
+              <div class="flex justify-between gap-3 sm:block">
+                <dt class="text-zinc-500">Votación</dt>
+                <dd class="font-medium text-zinc-900 dark:text-zinc-100">{{ VOTING_SYSTEMS.find(v => v.id === formData.voting_system)?.label }}</dd>
+              </div>
+              <div class="flex justify-between gap-3 sm:block">
+                <dt class="text-zinc-500">Categorías · Jurado</dt>
+                <dd class="font-medium text-zinc-900 dark:text-zinc-100">{{ categories.length }} · {{ selectedJudges.length }}</dd>
+              </div>
+            </dl>
+          </section>
         </div>
 
-        <div class="px-8 py-5 border-t border-zinc-100 dark:border-zinc-900 bg-zinc-50/40 dark:bg-zinc-900/20 flex items-center justify-between gap-3">
-          <p class="text-xs text-zinc-500">Puedes añadir más categorías desde el panel del concurso.</p>
+        <!-- Footer actions (pinned to the bottom of the screen on phones) -->
+        <div class="max-md:fixed max-md:inset-x-0 max-md:bottom-0 z-20 flex items-center gap-3 px-4 sm:px-6 py-3 md:py-4 border-t border-zinc-200 md:border-zinc-100 dark:border-zinc-800 md:dark:border-zinc-900 bg-white/95 dark:bg-zinc-950/95 backdrop-blur md:rounded-b-2xl">
           <Button
-            class="h-10 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-white text-sm font-semibold rounded-lg shadow-sm flex items-center gap-2"
-            @click="finish"
+            type="button"
+            variant="ghost"
+            class="h-10 gap-1.5 flex-1 sm:flex-none"
+            :disabled="isCreating"
+            @click="back"
           >
-            {{ categories.length ? 'Ir al concurso' : 'Omitir y finalizar' }}
+            <ArrowLeft v-if="step > 1" class="w-4 h-4" />
+            {{ step > 1 ? 'Atrás' : 'Cancelar' }}
+          </Button>
+          <div class="hidden sm:block flex-1" />
+          <Button
+            v-if="step < steps.length"
+            type="button"
+            class="h-10 gap-1.5 flex-1 sm:flex-none sm:px-5"
+            :disabled="!isStepValid(step)"
+            @click="next"
+          >
+            Siguiente
             <ArrowRight class="w-4 h-4" />
           </Button>
+          <Button
+            v-else
+            type="button"
+            class="h-10 gap-1.5 flex-1 sm:flex-none sm:px-5"
+            :disabled="isCreating || !isStep1Valid"
+            @click="createContest"
+          >
+            <Loader2 v-if="isCreating" class="w-4 h-4 animate-spin" />
+            <Check v-else class="w-4 h-4" />
+            {{ isCreating ? 'Creando…' : 'Crear concurso' }}
+          </Button>
         </div>
       </div>
     </div>
-
   </div>
 
-  <!-- ── Judge Picker Dialog ──────────────────────────────────────────────── -->
+  <!-- ── Jury picker ──────────────────────────────────────────────────────── -->
   <Dialog v-model:open="judgePickerOpen">
-    <DialogContent class="max-w-lg rounded-2xl p-0 border border-zinc-200 dark:border-zinc-800 shadow-xl bg-white dark:bg-zinc-950">
-      <DialogHeader class="p-5 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
-        <p class="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-0.5">Pool de Jurados</p>
-        <DialogTitle class="text-base font-bold text-zinc-900 dark:text-zinc-100">¿Quieres añadir jurados a esta categoría?</DialogTitle>
+    <DialogContent class="max-w-lg w-[calc(100vw-2rem)] rounded-2xl p-0 gap-0">
+      <DialogHeader class="p-5 border-b border-zinc-100 dark:border-zinc-800">
+        <DialogTitle class="text-base font-semibold">Jurado del concurso</DialogTitle>
+        <DialogDescription class="text-sm">Elige a quién invitar de tu pool de jurados.</DialogDescription>
       </DialogHeader>
 
-      <div class="p-5 space-y-4">
+      <div class="p-5 space-y-3">
         <div class="relative">
           <Search class="absolute left-3 top-2.5 w-4 h-4 text-zinc-400" />
-          <Input v-model="judgeSearch" placeholder="Buscar jurado..." class="pl-9 h-9 border-zinc-200 dark:border-zinc-700 text-sm" />
+          <Input v-model="judgeSearch" placeholder="Buscar por nombre, email o especialidad" class="pl-9 h-9 text-sm" />
         </div>
 
-        <div v-if="isLoadingPool" class="flex items-center justify-center py-8">
+        <div v-if="isLoadingPool" class="flex items-center justify-center py-10">
           <Loader2 class="w-6 h-6 animate-spin text-zinc-400" />
         </div>
-
-        <div v-else class="min-h-[336px] rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-          <div v-if="!filteredPool.length" class="text-center py-12 text-sm text-zinc-400">
-            No se encontraron jurados en el pool
-          </div>
-          <Table v-else>
-            <TableHeader>
-              <TableRow class="hover:bg-transparent border-b-zinc-200 dark:border-b-zinc-800">
-                <TableHead class="w-10"></TableHead>
-                <TableHead class="text-[10px] font-bold uppercase tracking-widest">Jurado</TableHead>
-                <TableHead class="w-20 text-right text-[10px] font-bold uppercase tracking-widest pr-4"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              <TableRow
-                v-for="j in paginatedPool"
-                :key="j.id"
-                class="cursor-pointer transition-colors"
-                :class="selectedJudgePoolIds.has(j.id) ? 'bg-zinc-50 dark:bg-zinc-900/40' : ''"
-                @click="toggleJudge(j)"
-              >
-                <TableCell class="w-10 pl-3">
-                  <Checkbox
-                    :model-value="selectedJudgePoolIds.has(j.id)"
-                    @click.stop="toggleJudge(j)"
-                  />
-                </TableCell>
-                <TableCell>
-                  <div class="flex items-center gap-3">
-                    <AvatarBubble
-                      :name="j.full_name || '??'"
-                      :avatar-url="(j as any).avatar_url ?? null"
-                      size="w-9 h-9"
-                      text-size="text-[10px]"
-                    />
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm font-semibold truncate">{{ j.full_name }}</p>
-                      <p class="text-[11px] truncate text-zinc-500 dark:text-zinc-400">{{ j.email }}</p>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell class="text-right pr-4">
-                  <span
-                    v-if="initialJudgePoolIds.has(j.id) && selectedJudgePoolIds.has(j.id)"
-                    class="text-[9px] font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400"
-                  >Añadido</span>
-                  <span
-                    v-else-if="initialJudgePoolIds.has(j.id) && !selectedJudgePoolIds.has(j.id)"
-                    class="text-[9px] font-bold uppercase tracking-widest text-red-600 dark:text-red-400"
-                  >Quitar</span>
-                  <span
-                    v-else-if="!initialJudgePoolIds.has(j.id) && selectedJudgePoolIds.has(j.id)"
-                    class="text-[9px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400"
-                  >Nuevo</span>
-                </TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
+        <div v-else-if="!judgePool.length" class="text-center py-10 space-y-2">
+          <p class="text-sm text-zinc-500">Tu pool de jurados está vacío.</p>
+          <NuxtLink to="/judge-pool" class="text-sm font-medium underline underline-offset-4">Invitar jurados al pool</NuxtLink>
         </div>
+        <div v-else-if="!filteredPool.length" class="text-center py-10 text-sm text-zinc-500">
+          Ningún jurado coincide con la búsqueda.
+        </div>
+        <ul v-else class="rounded-lg border border-zinc-200 dark:border-zinc-800 divide-y divide-zinc-100 dark:divide-zinc-800">
+          <li v-for="j in paginatedPool" :key="j.id">
+            <label class="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+              <Checkbox :model-value="pickerSelection.has(j.id)" @update:model-value="toggleJudge(j.id)" />
+              <AvatarBubble :name="j.full_name || '??'" :avatar-url="(j as any).avatar_url ?? null" size="w-8 h-8" text-size="text-[10px]" />
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium truncate">{{ j.full_name }}</span>
+                <span class="block text-xs text-zinc-500 truncate">{{ j.specialty ? `${j.specialty} · ` : '' }}{{ j.email }}</span>
+              </span>
+            </label>
+          </li>
+        </ul>
 
-        <div v-if="filteredPool.length > JUDGE_PAGE_SIZE" class="flex items-center justify-between pt-1">
-          <p class="text-[11px] text-zinc-500 tabular-nums">
-            Página {{ judgePickerPage }} de {{ judgePickerPageCount }} · {{ filteredPool.length }} jurado(s)
-          </p>
+        <div v-if="filteredPool.length > JUDGE_PAGE_SIZE" class="flex items-center justify-between">
+          <p class="text-xs text-zinc-500 tabular-nums">Página {{ judgePickerPage }} de {{ judgePickerPageCount }}</p>
           <div class="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              class="h-7 w-7 border-zinc-200 dark:border-zinc-700"
-              :disabled="judgePickerPage <= 1"
-              @click="judgePickerPage--"
-            >
+            <Button variant="outline" size="icon" class="h-7 w-7" :disabled="judgePickerPage <= 1" aria-label="Página anterior" @click="judgePickerPage--">
               <ChevronLeft class="w-3.5 h-3.5" />
             </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              class="h-7 w-7 border-zinc-200 dark:border-zinc-700"
-              :disabled="judgePickerPage >= judgePickerPageCount"
-              @click="judgePickerPage++"
-            >
+            <Button variant="outline" size="icon" class="h-7 w-7" :disabled="judgePickerPage >= judgePickerPageCount" aria-label="Página siguiente" @click="judgePickerPage++">
               <ChevronRight class="w-3.5 h-3.5" />
             </Button>
           </div>
         </div>
-
-        <p v-if="judgesDiffCount > 0" class="text-xs font-bold text-zinc-500 text-center">
-          <span v-if="judgesToAddCount" class="text-blue-600 dark:text-blue-400">+{{ judgesToAddCount }}</span>
-          <span v-if="judgesToAddCount && judgesToRemoveCount"> · </span>
-          <span v-if="judgesToRemoveCount" class="text-red-600 dark:text-red-400">-{{ judgesToRemoveCount }}</span>
-        </p>
       </div>
 
-      <DialogFooter class="p-4 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/30 flex gap-2 justify-end">
-        <Button variant="ghost" class="h-9 px-4 font-bold uppercase text-[10px] tracking-widest" @click="skipJudges">
-          Omitir
-        </Button>
-        <Button
-          class="h-9 px-5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-bold uppercase text-[10px] tracking-widest rounded-lg disabled:opacity-40 flex items-center gap-2"
-          :disabled="judgesDiffCount === 0 || isSavingJudges"
-          @click="confirmJudges"
-        >
-          <Loader2 v-if="isSavingJudges" class="w-3.5 h-3.5 animate-spin" />
-          Confirmar ({{ judgesDiffCount }})
+      <DialogFooter class="p-4 border-t border-zinc-100 dark:border-zinc-800 flex-row gap-2 justify-end">
+        <Button variant="ghost" class="h-9" @click="judgePickerOpen = false">Cancelar</Button>
+        <Button class="h-9" @click="confirmJudges">
+          Seleccionar ({{ pickerSelection.size }})
         </Button>
       </DialogFooter>
     </DialogContent>
