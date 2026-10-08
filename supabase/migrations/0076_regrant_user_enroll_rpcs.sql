@@ -1,0 +1,32 @@
+-- 0076_regrant_user_enroll_rpcs.sql
+-- Give signed-in users back the two RPCs 0063 took away from them.
+--
+-- ── What broke ──────────────────────────────────────────────────────────────
+-- 0063_revoke_rpc_execute revoked EXECUTE from PUBLIC, anon and authenticated
+-- on every SECURITY DEFINER RPC, on the premise that "there is not one `.rpc(`
+-- call that does not go through serverSupabaseAdmin()". Two did not:
+--
+--   enroll_participant  — POST /api/public/inscriptions/:token/enroll
+--   bulk_enroll_csv     — POST /api/contests/:id/participants/import
+--
+-- Both call with serverSupabaseUser(event) because both identify the caller
+-- with auth.uid(): the participant enrolling, the organizer importing. Under
+-- service_role auth.uid() is NULL and they raise auth_required, so moving them
+-- to the admin client is not an option without changing their signatures.
+-- Since 2026-09-18 every free enrollment and every CSV import has failed with
+-- "permission denied for function …" (a 500 to the user).
+--
+-- ── Why this grant is safe ──────────────────────────────────────────────────
+-- Only `authenticated`, never anon — the state both had from 0011 / 0024 until
+-- 0063. Each function guards itself: enroll_participant requires a session, an
+-- open registration, tickets, age and no duplicate; bulk_enroll_csv requires
+-- the caller to own the contest's organization.
+--
+-- What stays possible: a signed-in user calling enroll_participant directly
+-- through /rest/v1/rpc skips the endpoint's form validation (required custom
+-- fields, hidden core fields). That was already true before 0063. The real fix
+-- is a p_user_id argument and a service_role call, as 0054 did for
+-- confirm_inscription_uploads; tracked separately.
+
+GRANT EXECUTE ON FUNCTION public.enroll_participant(text,uuid,text,text,date,text,text,text,text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.bulk_enroll_csv(uuid,jsonb) TO authenticated;
